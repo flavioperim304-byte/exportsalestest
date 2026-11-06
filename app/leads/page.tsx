@@ -1,3 +1,4 @@
+
 import Link from "next/link"
 import { LeadsBoard } from "@/components/leads-board"
 import { postgresStatus } from "@/lib/lead-db"
@@ -25,7 +26,6 @@ export default async function LeadsPage() {
           Atualizar sinais. Uma linha dump não confirma compra.
         </p>
       </div>
-      <MonitorPanel />
       <LeadsBoard records={records} postgres={db.postgres && !db.error} error={db.error} />
     </main>
   )
