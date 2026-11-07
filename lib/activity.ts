@@ -31,7 +31,7 @@ const SOCIAL_GROWTH =
 const MIX_CHANGE =
   /\b(mudou o mix|mix de produtos|new (?:sku|range|collection)|dropped (?:the )?brand|tirou a marca|added .{0,40}(?:to|ao) (?:the )?(?:portfolio|portf[oó]lio)|discontinued|portf[oó]lio mudou|portfolio change|perdeu a exclusividade|lost exclusivity|ended (?:the )?distribution|left the portfolio)\b/i
 const EXHIBITION =
-  /\b(cosmoprof|beautyworld|in-cosmetics|expocosmetica|exhibition|exhibitor|trade fair|feira|feria (?:de|internacional|beauty)|stand (?:n[úu]mero|no\.?)\b/i
+  /\b(cosmoprof|beautyworld|in-cosmetics|expocosmetica|exhibition|exhibitor|trade fair|feira|feria (?:de|internacional|beauty)|stand (?:n[úu]mero|no\.?))\b/i
 const PROMOTION =
   /\b(promo(?:tion|ção|cion)|discount|desconto|campaign|campanha|oferta|sale(?:s)? event)\b/i
 const EVENT =
