@@ -4,43 +4,77 @@ import {
   briefUsesAnchorDistributors,
   firecrawlAnchorLine,
 } from "./anchors"
-import { buyingEvidenceLine, computeFitProbability, fitProbabilityLine } from "./fit-probability"
 import { ragLine } from "./rag"
 import type { Brief, Lead } from "./types"
 import { clip, splitList } from "./text"
 
 export const LEADS_PER_COUNTRY = 10
 
+type PromptKind = "buyers" | "prompt" | "competitors" | "dump"
+
 export function targetCountries(brief: Brief): string[] {
   return splitList(brief.markets)
 }
 
-function extra(brief: Brief): string {
-  const note = brief.instructions?.trim()
-  return note ? `Additional instructions: ${note}` : ""
+/** Normalize persisted form values so `dump ` and `competitors ` follow the same branch. */
+function searchKind(brief: Brief): string {
+  return String(brief.searchKind ?? "").trim().toLowerCase()
 }
 
-function firecrawlContactAsk(): string {
+function structuredSectionHeader(line: string): boolean {
+  return /^\s*(?:[-*]\s*)?(?:products|why a buyer would add this supplier|certifications|buyer types|the buyer must show|do not include)\s*:/i.test(
+    line,
+  )
+}
+
+/**
+ * Structured briefs often repeat the form fields inside the editable prompt.
+ * Remove those labelled blocks, but preserve free-form instructions before or
+ * after them. A prompt-only brief is kept intact by instructionsFor().
+ */
+function extra(brief: Brief): string {
+  const note = brief.instructions?.trim()
+  if (!note) return ""
+
+  const kept: string[] = []
+  let skippingValueContinuation = false
+
+  for (const rawLine of note.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) {
+      skippingValueContinuation = false
+      continue
+    }
+
+    if (structuredSectionHeader(line)) {
+      skippingValueContinuation = true
+      continue
+    }
+
+    if (skippingValueContinuation) continue
+    kept.push(line)
+  }
+
+  const cleaned = kept.join(" ").trim()
+  return cleaned ? `Additional instructions: ${cleaned}` : ""
+}
+
+function instructionsFor(brief: Brief): string {
+  return isPromptOnly(brief) ? brief.instructions?.trim() || "" : extra(brief)
+}
+
+/** Compact rules for discovery/enrichment. The full legacy rule remains for due diligence. */
+function discoveryEvidenceRule(): string {
   return [
-    "Crawl the company's official website, prioritizing home, about, products, brands, distribution, wholesale, contact, team, and relevant country pages.",
-    "Search the web for the same company to corroborate its identity, country operations, commercial role, portfolio, and recent activity.",
-    "Collect only published business contacts: key person, role, email, WhatsApp, phone, and official website.",
-    "Leave unpublished fields empty. Never guess names, emails, addresses, phone numbers, or job titles.",
-    "Distinguish facts found on the official website from information found on third-party sources.",
+    "Use attributable public evidence; never invent facts or fill unknowns by assumption.",
+    "For each material finding retain the candidate company, publication date (or undated), exact URL, a short excerpt, and reliability: high for primary/official evidence, medium for credible corroboration, low for weak or unverified indications.",
+    "Separate: (1) customs/shipment movement, (2) purchases and stock/restock, (3) sales, brand performance and channel growth, (4) competitor and portfolio moves, and (5) indirect activity such as fairs, hiring and social media.",
+    "A shipment is not automatically a purchase from the named supplier; resale is not proof of direct import; a brand mention is not proof of official distribution or buying intent.",
+    "A RAG neighbor or another company is never evidence about this candidate. Missing information is unknown, not a negative fact.",
   ].join(" ")
 }
 
-function exaBuyerSignalAsk(brief?: Brief): string {
-  return [
-    "Return short buyerSignals based on published evidence of the company's actual commercial role, products, brands, customers, channels, wholesale activity, distribution, or imports.",
-    "Do not treat a generic company description, trade fair participation, social media activity, or a brand mention as proof of import activity or willingness to buy.",
-    brief ? firecrawlAnchorLine(brief) : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
-}
-
-/** Shared evidence rules. Missing information must remain missing, not become a negative fact. */
+/** Full evidence rule retained for the existing due-diligence flow. */
 export function evidenceRule(): string {
   return [
     "EVIDENCE RULE (mandatory): Never invent or turn an inference into a fact.",
@@ -58,7 +92,7 @@ export function evidenceRule(): string {
   ].join(" ")
 }
 
-/** The salesperson wrote one prompt. The split buyer fields are empty. */
+/** The user supplied one free-text brief and left all structured buyer fields empty. */
 export function isPromptOnly(brief: Brief): boolean {
   const prompt = brief.instructions?.trim()
   if (!prompt) return false
@@ -69,34 +103,47 @@ export function isPromptOnly(brief: Brief): boolean {
     brief.exclusions,
     brief.differentiators,
     brief.certifications,
-  ].some((value) => value.trim())
+  ].some((value) => Boolean(value?.trim()))
 }
 
 function promptSearch(brief: Brief, country: string): string {
   return [
     brief.instructions?.trim() ?? "",
-    `Search only for companies that operate commercially in ${country}. Verify the country from company pages or other reliable public evidence.`,
-    `Identify the actual commercial role of each company. Do not assume that a company is an importer or distributor merely because it operates in the cosmetics or hair-care sector.`,
-    `These are potential buyers for ${brief.supplierName}, from ${brief.originCountry}. Do not return ${brief.supplierName} itself or unrelated suppliers.`,
-    "Do not broaden the requested buyer profile merely to fill the result list.",
+    `Search only for companies with commercial operations in ${country}; verify the country from reliable public evidence.`,
+    `Identify each company's actual commercial role. Do not infer importer or distributor status from sector membership alone.`,
+    `Find potential buyers for ${brief.supplierName} from ${brief.originCountry}; exclude the supplier itself and unrelated suppliers.`,
+    "Return fewer results rather than broadening the buyer profile to fill the list.",
   ]
     .filter(Boolean)
     .join("\n\n")
 }
 
+function competitorMarketRule(brief: Brief, countries: string[]): string {
+  const markets = countries.length ? countries.join(", ") : "the search countries"
+  const origin = brief.originCountry.trim() || "the supplier origin country"
+  return [
+    `Competitors must already sell the relevant category in ${markets}.`,
+    `Do not list factories, exporters, or brands that only sell in ${origin}.`,
+    "Country means the search market where the company sells, not its headquarters.",
+    `A brand from ${origin} belongs on the list only when a source shows it selling in a search country.`,
+    "Do not infer local distribution from global presence alone.",
+  ].join(" ")
+}
+
 export function competitorQuery(brief: Brief): string {
+  const countries = targetCountries(brief)
   const count = brief.countryCount && brief.countryCount > 0 ? brief.countryCount : 5
   const named = brief.markets.trim()
   const skip = brief.excludedMarkets?.trim()
 
   return [
-    brief.instructions?.trim() || `Find distributors of ${brief.supplierName}.`,
+    instructionsFor(brief) || `Find distributors of ${brief.supplierName}.`,
     named ? `Only these countries: ${named}.` : `Cover ${count} countries.`,
-    skip ? `Do not include these countries: ${skip}.` : "",
-    `In each country, identify the company distributing ${brief.supplierName}, plus direct competitor distributors of rival brands in that same country.`,
-    `A direct competitor distributor must have evidence of distributing or importing a rival brand in the searched country. A brand mention alone is insufficient.`,
-    "Do not classify an ordinary retailer, salon, manufacturer, or logistics company as a distributor without supporting evidence.",
-    "Do not return the brand's own headquarters as a local distributor.",
+    skip ? `Exclude these countries: ${skip}.` : "",
+    `Identify the local distributor of ${brief.supplierName} and distributors of directly competing brands in each target country.`,
+    competitorMarketRule(brief, countries),
+    "Require country-specific evidence of distribution or import activity; a brand mention or isolated product listing is insufficient.",
+    "Do not label an ordinary retailer, salon, manufacturer, or logistics provider as a distributor without evidence. Do not list a brand's headquarters as its local distributor.",
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -104,14 +151,11 @@ export function competitorQuery(brief: Brief): string {
 
 export function competitorSystemPrompt(): string {
   return [
-    evidenceRule(),
-    "You are in company discovery mode.",
-    "Return real companies and their official websites.",
-    "For every requested country, identify the named brand's local distributor and direct competitor distributors of rival brands.",
-    "Confirm the commercial role from public evidence. Do not assume distribution from a brand mention or product listing alone.",
-    "A retailer, salon, manufacturer, or logistics company is not automatically a distributor.",
-    "Do not include companies in excluded countries.",
-    "Do not score companies and do not invent email addresses, phone numbers, brands, or distribution relationships.",
+    discoveryEvidenceRule(),
+    "Discover and verify local distribution; do not score companies.",
+    "Return real companies and official URLs. Require country-specific evidence for the named brand or direct rival brands.",
+    "A brand mention or product listing alone does not establish official distribution. Exclude unrelated roles and excluded countries.",
+    "Never invent contacts, brands, or distribution relationships.",
   ].join(" ")
 }
 
@@ -119,34 +163,32 @@ export function buyerTypes(brief: Brief): string[] {
   return splitList(brief.buyerTypes)
 }
 
+function exaBuyerSignalAsk(brief?: Brief): string {
+  return [
+    "Return concise buyerSignals tied to published evidence of actual role, relevant products, brands, wholesale/distribution channels, and customer type.",
+    "When found during discovery, note dated purchase/import/restock evidence, measured sales or brand performance, channel expansion, competitor/portfolio moves, or openness to new suppliers; do not stretch weak signals into facts.",
+    brief ? firecrawlAnchorLine(brief) : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+}
+
 export function exaQuery(brief: Brief, country: string, buyerType?: string): string {
   if (isPromptOnly(brief)) return promptSearch(brief, country)
 
-  const type =
-    buyerType?.trim() ||
-    brief.buyerTypes.trim() ||
-    "importer, distributor, or wholesaler"
-
+  const type = buyerType?.trim() || brief.buyerTypes.trim() || "importer, distributor, or wholesaler"
   return [
-    `Find ${type} companies operating commercially in ${country} that handle products or categories related to ${brief.products}.`,
-    `The company must show evidence of the requested commercial role. Do not return a company simply because it belongs to the cosmetics or hair-care sector.`,
-    `This search is for this buyer type: ${type}. Do not replace it with a different buyer type to complete the list.`,
-    `Potential buyers for ${brief.supplierName}, from ${brief.originCountry}. Do not return ${brief.supplierName} itself or unrelated suppliers.`,
-    brief.mustHaves
-      ? `Prioritize companies with published evidence of: ${brief.mustHaves}.`
-      : "",
-    brief.exclusions
-      ? `Exclude companies matching these conditions: ${brief.exclusions}.`
-      : "",
-    brief.certifications
-      ? `Relevant certifications, when published: ${brief.certifications}. Do not assume certification.`
-      : "",
+    `Find ${type} companies with commercial operations in ${country} whose published portfolio, brands, or product listings include ${brief.products} or directly competing categories.`,
+    "Require public evidence of the requested commercial role and relevant product/category/channel activity. Do not substitute another buyer type.",
+    `Potential buyers for ${brief.supplierName} from ${brief.originCountry}; exclude the supplier itself and unrelated suppliers.`,
+    brief.mustHaves ? `Prioritize published evidence of: ${brief.mustHaves}.` : "",
+    brief.exclusions ? `Exclude: ${brief.exclusions}.` : "",
     brief.differentiators
-      ? `Supplier offer and relevant product characteristics: ${brief.differentiators}. Use these to assess category relevance, not to assume buying intent.`
+      ? `Use these supplier differentiators for category relevance only, not as buyer requirements or proof of buying intent: ${brief.differentiators}.`
       : "",
-    "Verify company identity and commercial activity in the searched country.",
-    "Do not require published import records as a condition for discovery. A qualified wholesaler or distributor may buy locally.",
-    "Do not treat trade fair participation, social media activity, hiring, or a brand mention as proof of import activity or purchase intent.",
+    "Verify company identity, country operations, buyer role, relevant category, brands, and sales channels.",
+    "Do not require public import records for discovery; a relevant local wholesaler or distributor may still qualify.",
+    "A fair, social post, hiring notice, or brand mention alone is not purchase intent.",
     exaBuyerSignalAsk(brief),
     extra(brief),
   ]
@@ -157,22 +199,16 @@ export function exaQuery(brief: Brief, country: string, buyerType?: string): str
 export function exaBackupQuery(brief: Brief, country: string, buyerType?: string): string {
   if (isPromptOnly(brief)) return promptSearch(brief, country)
 
-  const type =
-    buyerType?.trim() ||
-    brief.buyerTypes.trim() ||
-    "importer, distributor, or wholesaler"
-
+  const type = buyerType?.trim() || brief.buyerTypes.trim() || "importer, distributor, or wholesaler"
   return [
-    `Find additional ${type} companies operating commercially in ${country} that handle products or categories related to ${brief.products}.`,
-    "Find companies not already identified in the first search. Do not return duplicates under alternative trade names when they share the same company identity or official domain.",
-    `Keep the same buyer type: ${type}. Do not broaden the search to unrelated buyer categories.`,
-    `Potential buyers for ${brief.supplierName}. Do not return ${brief.supplierName} itself or unrelated suppliers.`,
-    brief.mustHaves ? `Prioritize evidence of: ${brief.mustHaves}.` : "",
+    `Find additional ${type} companies in ${country} whose published portfolio, brands, or product listings include ${brief.products} or directly competing categories.`,
+    "Exclude companies already found under the same identity or official domain.",
+    `Keep the same buyer type (${type}); do not broaden to unrelated categories. Potential buyers for ${brief.supplierName}.`,
+    brief.mustHaves ? `Prioritize published evidence of: ${brief.mustHaves}.` : "",
     brief.exclusions ? `Exclude: ${brief.exclusions}.` : "",
-    "Do not require public import records as a condition for discovery.",
-    "Do not treat brand mentions, fair participation, social activity, or hiring as proof of purchase intent.",
-    extra(brief),
+    "Do not require public import records for discovery. A brand mention, fair, social post, or hiring notice alone is not buying intent.",
     exaBuyerSignalAsk(brief),
+    extra(brief),
   ]
     .filter(Boolean)
     .join(" ")
@@ -180,58 +216,57 @@ export function exaBackupQuery(brief: Brief, country: string, buyerType?: string
 
 export function dumpConfirmQueryLine(brief: Brief, country: string): string {
   return [
-    evidenceRule(),
-    `Confirm whether each named company in ${country} exists and whether public evidence supports its role as a ${brief.products || "hair-care"} importer, distributor, wholesaler, or other relevant buyer type.`,
-    "Exa looks up each company name. Firecrawl then crawls the official site and corroborating web sources.",
-    "A trade dump is a discovery signal, not proof of a purchase from the named supplier or proof of current commercial activity.",
-    "Distinguish direct imports from local purchasing, exports, logistics activity, and unrelated shipments.",
-    "Do not reject a company solely because its import activity is not publicly visible.",
-    extra(brief),
+    discoveryEvidenceRule(),
+    `Verify each company identified in trade data for ${country}: identity, country operations, product relevance, and actual role (importer, consignee, buyer, exporter, shipper, freight forwarder, customs broker, distributor, or other).`,
+    "Separate direct imports, local purchases, exports, logistics activity, and unrelated shipments. Shipment volume is not automatically last purchase, sales, stock, or a purchase from the named supplier.",
+    "Do not reject a commercially relevant company only because public import data is incomplete.",
+    instructionsFor(brief),
   ]
     .filter(Boolean)
     .join(" ")
 }
 
+function firecrawlContactAsk(): string {
+  return [
+    "PHASE 2 — COMPANY ENRICHMENT. Research only the candidate supplied by Phase 1; do not discover a new list.",
+    "Review the official site first: about, products, brands, distribution/wholesale, contact, team, and relevant country pages. Open only pages relevant to the candidate's identity, portfolio, channels, contacts, and recent commercial activity.",
+    "Extract role, products bought versus sold, portfolio brands, customer channels, distribution/import evidence, training capability, and published business contacts.",
+    "For each material finding record candidate company, evidence category, date (or undated), exact source URL, short excerpt, and reliability: high (official/primary), medium (credible corroboration), low (weak/unverified indication). Keep the five evidence groups separate: customs/shipments; purchases/stock; sales/brand performance/channel growth; competitor/portfolio moves; indirect activity.",
+    "Never guess names, emails, WhatsApp numbers, phone numbers, job titles, sales, stock, imports, or purchase intent. Leave unpublished fields empty.",
+  ].join(" ")
+}
+
 export function firecrawlPrompt(
   brief: Brief,
   country: string,
-  buyerType?: string
+  buyerType?: string,
 ): string {
-  if (brief.searchKind === "dump") {
+  const common = [discoveryEvidenceRule(), firecrawlContactAsk()]
+
+  if (searchKind(brief) === "dump") {
     return [
-      evidenceRule(),
-      firecrawlContactAsk(),
+      ...common,
       `Supplier: ${brief.supplierName} (${brief.originCountry}).`,
       country
-        ? `This company name came from a trade-data search associated with ${country}. Verify its identity and commercial activity in that market.`
-        : "This company name came from a trade-data search. Verify its identity and commercial activity from public sources.",
-      "Determine whether the company is an importer, distributor, wholesaler, retailer, manufacturer, salon, logistics provider, or another type of business.",
-      "Confirm whether it operates in hair care, shampoo, cosmetics, or the categories relevant to the brief.",
-      "A shipment record alone does not prove that the company buys the supplier's brand or currently distributes it.",
-      "Reject logistics providers, freight forwarders, and unrelated companies when they do not meet the buyer profile.",
-      "Do not automatically reject a retailer or salon if the brief explicitly includes that buyer type and the company shows the relevant commercial activity.",
-      buyerType ? `The initial search labeled this company as: ${buyerType}. Verify this label; do not assume it is correct.` : "",
-      brief.instructions?.trim() ?? "",
+        ? `Candidate came from trade-data research associated with ${country}; verify identity and actual operations there.`
+        : "Candidate came from trade-data research; verify identity and actual commercial operations.",
+      "Determine the role of each named party in the record: importer, consignee, buyer, exporter, shipper, freight forwarder, customs broker, or other. Identify product, date, origin, destination and shipment details only when present in the supplied record or public source.",
+      "A shipment is evidence of cargo movement only. It does not by itself prove a purchase, current stock, sales, current distribution, or a relationship with the named supplier.",
+      buyerType ? `Initial label: ${buyerType}. Verify it; do not assume it is correct.` : "",
+      instructionsFor(brief),
     ]
       .filter(Boolean)
       .join("\n")
   }
 
-  if (brief.searchKind === "competitors") {
+  if (searchKind(brief) === "competitors") {
     return [
-      evidenceRule(),
-      firecrawlContactAsk(),
+      ...common,
       `Brand: ${brief.supplierName} (${brief.originCountry}).`,
-      country
-        ? `This company was retrieved in ${country}.`
-        : "Determine the relevant country from published evidence.",
-      buyerType
-        ? `The initial search labeled this company as: ${buyerType}. Verify this classification.`
-        : "",
-      "Confirm whether the company distributes the named brand or a rival brand in the searched country.",
-      "A brand mention, isolated product listing, or social media reference is not sufficient by itself to establish official distribution.",
-      "Identify the source supporting the distribution relationship and the country where it applies.",
-      brief.instructions?.trim() ?? "",
+      country ? `Candidate was retrieved in ${country}.` : `Target markets: ${brief.markets}.`,
+      buyerType ? `Initial role label: ${buyerType}. Verify it.` : "",
+      "Confirm whether the company distributes the named brand or a rival in the searched country. Cite the page establishing the relationship and country; a mention or isolated listing is insufficient.",
+      instructionsFor(brief),
     ]
       .filter(Boolean)
       .join("\n")
@@ -239,117 +274,88 @@ export function firecrawlPrompt(
 
   if (isPromptOnly(brief)) {
     return [
-      evidenceRule(),
-      firecrawlContactAsk(),
+      ...common,
       `Supplier: ${brief.supplierName} (${brief.originCountry}).`,
-      country
-        ? `This company was retrieved as a candidate for ${country}.`
-        : `Target markets: ${brief.markets}.`,
-      "First identify the company's actual business role, products, brands, and channels.",
-      "Then judge the company only against the following search prompt:",
+      country ? `Candidate market: ${country}.` : `Target markets: ${brief.markets}.`,
+      "Identify actual role, products, brands and channels; assess only against this user-written brief:",
       brief.instructions?.trim() ?? "",
-      "Do not introduce additional buyer requirements that are not present in the search prompt.",
+      "Do not add buyer requirements not stated in the brief. Treat supplier certifications as supplier credentials unless explicitly identified as buyer requirements.",
     ].join("\n")
   }
 
   const type = buyerType?.trim()
-
   return [
-    evidenceRule(),
-    firecrawlContactAsk(),
-    `Supplier: ${brief.supplierName} (${brief.originCountry}). Products: ${brief.products}.`,
-    country
-      ? `This company was retrieved as a candidate for ${country}.`
-      : `Target markets: ${brief.markets}.`,
-    type
-      ? `Initial buyer-type classification: ${type}. Verify the classification from the company's actual activities.`
-      : "",
-    brief.buyerTypes
-      ? `Buyer types allowed by this brief: ${brief.buyerTypes}.`
-      : "",
-    brief.mustHaves
-      ? `Check for published evidence of these requirements: ${brief.mustHaves}.`
-      : "",
-    brief.exclusions
-      ? `Check whether the company matches any of these exclusions: ${brief.exclusions}.`
-      : "",
+    ...common,
+    `Supplier: ${brief.supplierName} (${brief.originCountry}); relevant products: ${brief.products}.`,
+    country ? `Candidate market: ${country}.` : `Target markets: ${brief.markets}.`,
+    type ? `Initial buyer-type label: ${type}. Verify from actual activities.` : "",
+    brief.buyerTypes ? `Allowed buyer types: ${brief.buyerTypes}.` : "",
+    brief.mustHaves ? `Check these buyer requirements when published: ${brief.mustHaves}.` : "",
+    brief.exclusions ? `Flag or exclude these conflicts: ${brief.exclusions}.` : "",
     brief.certifications
-      ? `Relevant certifications: ${brief.certifications}. Record only certifications actually found.`
+      ? `Supplier certifications/credentials (context only, not buyer requirements): ${brief.certifications}.`
       : "",
     brief.differentiators
-      ? `Supplier differentiators: ${brief.differentiators}. Assess relevance without assuming the company wants to buy.`
+      ? `Supplier differentiators (category relevance only): ${brief.differentiators}.`
       : "",
-    "Record the company's role, products it buys, products it sells, brands in its portfolio, customer channels, and evidence of wholesale, distribution, or import activity separately.",
-    "Do not classify a company as an importer solely because it sells imported products.",
-    "Do not classify a company as a distributor solely because it lists several brands.",
-    "Do not reject a potentially relevant company solely because import records or purchasing data are unpublished.",
+    "Report role, products bought versus sold, portfolio brands, customer channels, and distribution/import evidence separately.",
+    "Do not infer direct importing from resale of imported goods or official distribution from a list of brands. Missing import or purchase data is unknown, not a rejection.",
     extra(brief),
   ]
     .filter(Boolean)
     .join(" ")
 }
 
-/**
- * Shared discovery brief for combined searches.
- * It defines the union of companies to discover, not a shared final supplier score.
- * Final supplier compatibility must be assessed separately for each brief.
- */
+/** Shared discovery brief for combined searches; final supplier fit remains separate. */
 export function searchBrief(brief: Brief, also?: Brief): Brief {
   if (!also) return brief
 
+  const uniqueInstructions = [...new Set([brief.instructions?.trim(), also.instructions?.trim()].filter(Boolean))]
   return {
     ...brief,
     supplierName: `${brief.supplierName} and ${also.supplierName}`,
-    products: `${brief.products}. Also ${also.products}`,
-    buyerTypes: `${brief.buyerTypes}. Also ${also.buyerTypes}`,
-    mustHaves: [brief.mustHaves, also.mustHaves].filter(Boolean).join(". "),
-    differentiators: [brief.differentiators, also.differentiators]
-      .filter(Boolean)
-      .join(" "),
-    exclusions: [brief.exclusions, also.exclusions]
-      .filter(Boolean)
-      .join(", "),
-    instructions: [brief.instructions, also.instructions]
-      .filter(Boolean)
-      .join(" "),
+    products: [brief.products, also.products].filter(Boolean).join("; Also: "),
+    buyerTypes: [brief.buyerTypes, also.buyerTypes].filter(Boolean).join("; Also: "),
+    mustHaves: [brief.mustHaves, also.mustHaves].filter(Boolean).join("; "),
+    differentiators: [brief.differentiators, also.differentiators].filter(Boolean).join("; "),
+    exclusions: [brief.exclusions, also.exclusions].filter(Boolean).join("; "),
+    instructions: uniqueInstructions.join("\n"),
   }
 }
 
 export function exaSystemPrompt(brief?: Brief): string {
   return [
-    evidenceRule(),
-    "You are in company discovery mode, not scoring mode.",
-    `Return at most ${LEADS_PER_COUNTRY} real companies of the buyer type specified in the query.`,
-    "Every company must operate commercially in the one country named in the query. Do not include companies merely because they have a regional website or mention that country.",
-    "Return potential buyers for the supplier named in the query. Do not return that supplier itself or unrelated suppliers.",
-    "Each company must have an official website or a clearly identified official business presence.",
-    "Prioritize evidence of the actual commercial role, relevant products, brands, and sales channels.",
-    "Do not substitute salons, retailers, manufacturers, or service providers for the requested buyer type.",
-    "Do not require public import records if the company otherwise meets the requested buyer profile.",
-    "Do not score companies, produce a market report, or invent email addresses, phone numbers, import activity, or purchase intent.",
-    "Avoid duplicate companies under different trading names when the identity or official domain is the same.",
-    exaBuyerSignalAsk(brief),
-    "Prefer official company websites over social profiles. Use social profiles only as supporting evidence when relevant.",
+    discoveryEvidenceRule(),
+    "PHASE 1 — COMPANY DISCOVERY. Find candidates; do not score purchase probability.",
+    `Return up to ${LEADS_PER_COUNTRY} companies per country only when public evidence supports the requested buyer type, relevant category, and commercial operation in that country. Return fewer rather than filling the list with weak matches.`,
+    "Each candidate needs an official website or clearly identifiable official business presence. Prioritize actual commercial role, portfolio, brands, products and customer channels. Avoid duplicates; do not invent contacts, imports or buying intent.",
+    "Do not require public import records when role and category fit are otherwise supported. Do not include the supplier itself or substitute unrelated buyer types.",
+    brief ? firecrawlAnchorLine(brief) : "",
   ]
     .filter(Boolean)
     .join(" ")
 }
 
+function promptKind(brief: Brief, also?: Brief): PromptKind {
+  const kind = searchKind(brief)
+  if (kind === "competitors" && !also) return "competitors"
+  if (kind === "dump") return "dump"
+  if (isPromptOnly(brief) && !also) return "prompt"
+  return "buyers"
+}
+
+function suppliersLabel(brief: Brief, also?: Brief): string {
+  return also ? `${brief.supplierName} and ${also.supplierName}` : brief.supplierName
+}
+
 function openaiEvidenceSection(brief: Brief, also?: Brief): string {
   const sites = [brief.website, also?.website].filter(Boolean)
-
   return [
-    "### EVIDENCE AND FACT-CHECKING RULES",
-    "Use only evidence contained in the candidate cards and their cited URLs or page extracts. Do not browse.",
-    "Do not invent company identity, country, contacts, products, brands, imports, purchases, volumes, stock, sales, exclusivity, or intent to buy.",
-    "Separate verified facts from indications and interpretations.",
-    "Absence of published information is unknown, not proof that the activity does not exist.",
-    "A company's products for sale are not automatically products it imports directly or purchases from the named supplier.",
-    "A brand mention does not automatically establish an official distribution relationship.",
-    "Hiring, social media activity, trade fair participation, and generic company growth are not proof of purchase intent.",
-    "Do not treat system-generated fit scores, buying-evidence summaries, RAG similarity, or preliminary classifications as independent evidence.",
-    "Do not copy contacts, brands, purchases, or commercial facts from a RAG neighbor or another company.",
-    "Do not add requirements, must-haves, or exclusions that are not stated in the brief.",
+    "### EVIDENCE RULES",
+    "Use only supplied candidate cards and cited excerpts; do not browse or invent facts. Missing evidence is unknown, not negative.",
+    "For each material fact, identify the candidate, date (or undated), exact source URL and reliability. Keep separate: customs/shipments; purchases/stock; sales/brand performance/channel growth; competitor/portfolio moves; indirect activity.",
+    "A shipment does not prove purchase from the supplier; resale does not prove direct import; a brand mention does not prove official distribution. RAG similarity and system scores are context only, never proof.",
+    "Never transfer information from another company or a RAG neighbor.",
     sites.length ? `The supplier's own website is not a buyer: ${sites.join(" or ")}.` : "",
   ]
     .filter(Boolean)
@@ -359,467 +365,243 @@ function openaiEvidenceSection(brief: Brief, also?: Brief): string {
 function openaiScopeSection(
   brief: Brief,
   also: Brief | undefined,
-  kind: "buyers" | "prompt" | "competitors" | "dump"
+  kind: PromptKind,
 ): string {
-  const countries = targetCountries(brief)
-  const markets = countries.length
-    ? countries.join(", ")
-    : brief.markets || "unpublished"
-
-  const suppliers = also
-    ? `${brief.supplierName} and ${also.supplierName}`
-    : brief.supplierName
-
+  const markets = targetCountries(brief).join(", ") || brief.markets || "unpublished"
   const lines = [
-    "### SEARCH SCOPE AND COMMERCIAL CRITERIA",
-    `- **Supplier(s):** ${suppliers}, from ${brief.originCountry || "unpublished"}.`,
-    `- **Target markets:** ${markets}.`,
+    "### SCOPE",
+    `Supplier(s): ${suppliersLabel(brief, also)}; origin: ${brief.originCountry || "unpublished"}.`,
+    `Markets: ${markets}.`,
   ]
 
   if (kind === "competitors") {
     lines.push(
-      `- **Brand to map:** ${brief.supplierName}.`,
-      brief.excludedMarkets
-        ? `- **Excluded countries:** ${brief.excludedMarkets}.`
-        : "",
-      "- **Target profile:** the brand's local distributor and direct competitor distributors of rival brands in each searched country.",
-      "- A retailer, salon, manufacturer, or brand mention is not automatically proof of distributor status."
+      `Map local distribution of ${brief.supplierName} and direct rival brands; require evidence in the searched country.`,
+      brief.excludedMarkets ? `Exclude: ${brief.excludedMarkets}.` : "",
     )
   } else if (kind === "prompt") {
     lines.push(
-      "- Evaluate the candidate only against the search prompt in <search_prompt>.",
-      "- Identify the company's actual commercial role before assessing compatibility.",
-      "- Extract contacts, brands, launches, hiring, and web mentions only when published."
+      "Evaluate only against this complete user-written brief:",
+      brief.instructions?.trim() ?? "",
+      "Treat supplier certifications as supplier credentials, not buyer requirements, unless the brief explicitly says the buyer must hold them.",
     )
   } else {
     lines.push(
-      `- **${brief.supplierName} products:** ${brief.products || "unpublished"}.`,
-      `- **Buyer types:** ${brief.buyerTypes || "unpublished"}. A candidate may match any buyer type explicitly allowed by the brief.`,
-      `- **Must-haves:** ${brief.mustHaves || "none stated"}.`,
-      `- **Exclusions:** ${brief.exclusions || "none stated"}.`,
-      `- **Certifications:** ${brief.certifications || "none stated"}.`,
-      "- Do not require public import records if the company otherwise meets the buyer profile.",
-      "- Distinguish a company's buying activity from its selling activity."
+      `Products/categories: ${brief.products || "unpublished"}.`,
+      `Allowed buyer types: ${brief.buyerTypes || "unpublished"}.`,
+      `Buyer requirements: ${brief.mustHaves || "none stated"}.`,
+      `Exclusions: ${brief.exclusions || "none stated"}.`,
+      brief.certifications
+        ? `Supplier credentials (context only, not buyer requirements): ${brief.certifications}.`
+        : "",
+      "Assess channel and product fit without requiring published import history. Distinguish products bought from products sold.",
     )
-
-    if (also) {
+    if (kind === "dump") {
       lines.push(
-        `- **${also.supplierName} products:** ${also.products || "unpublished"}.`,
-        `- **${also.supplierName} buyer types:** ${also.buyerTypes || "unpublished"}.`,
-        `- **${also.supplierName} must-haves:** ${also.mustHaves || "none stated"}.`,
-        `- **${also.supplierName} exclusions:** ${also.exclusions || "none stated"}.`,
-        "- Evaluate compatibility with each supplier independently. Do not copy one supplier's fit rating to the other."
+        "This is trade-data verification: distinguish importer, consignee, buyer, exporter, shipper, freight forwarder and customs broker. Treat records as shipment movement, not automatically as a purchase, sale, stock or purchase from the named supplier.",
       )
     }
-
+    if (also) {
+      lines.push(
+        `Second supplier: ${also.supplierName}; products: ${also.products || "unpublished"}; buyer types: ${also.buyerTypes || "unpublished"}; requirements: ${also.mustHaves || "none stated"}; exclusions: ${also.exclusions || "none stated"}.`,
+        "Assess each supplier independently.",
+      )
+    }
     lines.push(
-      "- **Required metadata, only when published:** company role, country, key contact, email, WhatsApp, phone, brands in portfolio, products bought, products sold, customer channels, recent launches, and relevant recent activity."
+      "Extract metadata only when explicitly published. Do not infer missing fields or fill them with placeholder facts; leave unavailable values empty and state material gaps in qualification_needed. Put decisive evidence and source URLs in rationale. Keep the five evidence groups separate and do not add JSON fields.",
     )
   }
 
-  if (kind === "dump") {
-    lines.push(
-      "- Trade-dump records are discovery signals, not proof of purchase from the named supplier.",
-      "- A shipment may support the conclusion that the company moves cargo, but does not by itself establish its current portfolio, distribution role, or supplier relationship.",
-      "- Do not copy shipment volume into last purchase or sales fields.",
-      "- Assess company identity, buyer role, and supplier compatibility separately."
-    )
-  }
-
-  const extraNote = [
-    brief.instructions?.trim(),
-    also?.instructions?.trim(),
-  ]
+  const customInstructions = [instructionsFor(brief), also ? instructionsFor(also) : ""]
     .filter(Boolean)
     .join("\n")
-
-  if (extraNote) {
-    lines.push("", "<search_prompt>", extraNote, "</search_prompt>")
+  if (customInstructions && kind !== "prompt") {
+    lines.push("Additional user instructions:", customInstructions)
   }
 
   return lines.filter(Boolean).join("\n")
 }
 
-function openaiScoringSection(
-  kind: "buyers" | "prompt" | "competitors" | "dump"
-): string {
+function openaiScoringSection(kind: PromptKind): string {
   if (kind === "competitors") {
     return [
-      "### CLASSIFICATION RULES",
-      "",
-      "| Field | Values | Meaning and rules |",
-      "| --- | --- | --- |",
-      "| `icp` | `high` | `medium` | `low` |",
-      "| `best_fit` | brand name | `direct competitor` | `neither` | `unknown` |",
-      "| `purchase_probability` | `high` | `medium` | `low` |",
-      "| `qualification_needed` | string | State what still needs verification. |",
-      "| `entry_strategy` | string | Concise market-entry recommendation supported by the available evidence. |",
-      "",
-      "For competitor mapping, classify the actual distribution relationship in the searched country. Do not use unpublished last purchase, stock, or sales data as a reason to set best_fit to neither.",
-      "Use unknown when the available evidence cannot establish whether the company distributes the named brand or a rival brand.",
-      "The purchase_probability field is a qualitative evidence tier only, not a statistical probability. Do not output percentages.",
+      "### CLASSIFICATION",
+      "Set icp from verified local distribution role and category fit. best_fit must be the named brand, 'direct competitor', 'neither' or 'unknown'. Do not use missing purchase/stock/sales data as a reason for neither. purchase_probability is qualitative, not statistical.",
     ].join("\n")
   }
 
   return [
-    "### CLASSIFICATION RULES",
-    "",
-    "#### 1. ICP (`high` | `medium` | `low`)",
-    "- Assess the candidate's compatibility with the buyer profile in the brief.",
-    "- Consider company role, category, product portfolio, customer channels, and evidence of commercial operation.",
-    "- High means strong alignment with the requested buyer profile. It does not mean that the company intends to buy.",
-    "- Medium means partial alignment or relevant potential with some important facts still unverified.",
-    "- Low means evidence of material mismatch with the requested buyer profile. Missing information alone is not enough to assign low.",
-    "",
-    "#### 2. Supplier fit (`supplier_fits`)",
-    "- Evaluate each supplier separately against that supplier's products, buyer profile, must-haves, exclusions, and differentiators.",
-    "- Do not copy the same fit level to both suppliers unless the evidence independently supports the same conclusion.",
-    "- A company can have high ICP for the general buyer profile but different fit levels for the individual suppliers.",
-    "- Do not require published purchase history to establish product or channel compatibility.",
-    "",
-    "#### 3. Best fit (`best_fit`)",
-    "- Use only the supplier name, `both`, `neither`, or `unknown`.",
-    "- Use a supplier name when the evidence shows that supplier is the better commercial match.",
-    "- Use `both` when both suppliers have independently supported commercial compatibility.",
-    "- Use `neither` only when evidence indicates that neither supplier is suitable.",
-    "- Use `unknown` when there is insufficient evidence to compare the suppliers.",
-    "- Do not set `neither` merely because last purchase, stock, import volume, or sales figures are unpublished.",
-    "- Do not infer best_fit from a preliminary score, RAG similarity, hiring, social activity, or a brochure alone.",
-    "",
-    "#### 4. Purchase evidence (`purchase_probability`)",
-    "- This field is a temporary qualitative evidence tier, NOT a statistical probability of purchase or response.",
-    "- `high` requires direct and recent evidence of an active commercial opportunity, such as a request for prices, catalog, samples, a meeting, a concrete negotiation, or a confirmed discussion about adding a brand.",
-    "- `medium` means the company is commercially compatible, but there is no direct evidence of an active opportunity.",
-    "- `low` means there is evidence of commercial mismatch or a reason the opportunity is unlikely. Missing data alone is not sufficient.",
-    "- Do not output percentages or describe the field as a calibrated probability.",
-    "",
-    "#### 5. Qualification (`qualification_needed`)",
-    "- State the specific facts that a salesperson still needs to confirm.",
-    "- Examples: whether the company imports directly, who makes purchasing decisions, whether it accepts new brands, which channels it serves, and its relevant category volumes.",
-    "- Do not present an unpublished fact as a negative finding.",
-    "",
-    "#### 6. Rationale and entry strategy",
-    "- Explain the classification using concrete candidate-specific evidence.",
-    "- Separate verified facts from interpretations.",
-    "- Do not invent market statistics, company volumes, commercial practices, or purchase history.",
+    "### CLASSIFICATION",
+    "ICP: high = strong buyer-role, product/category and channel alignment; medium = partial or not fully verified; low = evidence of material mismatch. Missing data alone is not low.",
+    "supplier_fits: assess each supplier separately against its products, category, buyer types, channels, requirements and exclusions. Purchase history is not required to establish compatibility.",
+    "best_fit: choose the supplier with the stronger supported product/channel fit; use 'both' when both fit, 'neither' only for demonstrated mismatch, and 'unknown' only when product/channel evidence is insufficient. Do not use unknown or neither merely because purchase data is unpublished.",
+    "purchase_probability: qualitative active-opportunity tier, not a statistical forecast. High requires direct recent buyer action (price/catalog/sample request, meeting, negotiation or explicit brand-addition discussion). Medium means a compatible buyer with credible commercial signals but no direct buying action. Low requires evidence of material mismatch; missing purchase data alone is not low.",
+    "Keep ICP, supplier compatibility and active buying intent separate. A high fit does not mean the company intends to buy.",
+    "Use rationale for concise candidate-specific evidence and URLs. Use qualification_needed for facts still to confirm; do not turn unknowns into negatives.",
   ].join("\n")
 }
 
 export function openaiInstructions(brief: Brief, also?: Brief): string {
-  const kind: "buyers" | "prompt" | "competitors" | "dump" =
-    brief.searchKind === "competitors" && !also
-      ? "competitors"
-      : brief.searchKind === "dump"
-        ? "dump"
-        : isPromptOnly(brief) && !also
-          ? "prompt"
-          : "buyers"
-
-  const suppliers = also
-    ? `${brief.supplierName} and ${also.supplierName}`
-    : brief.supplierName
-
+  const kind = promptKind(brief, also)
   const role =
     kind === "competitors"
-      ? `You are a B2B company verification analyst mapping local distributors of ${brief.supplierName} from ${brief.originCountry}. Evaluate only the supplied candidate cards. Do not browse or invent companies, brands, or countries.`
-      : `You are a B2B export lead qualification analyst evaluating candidates for ${suppliers} from ${brief.originCountry}. Assess identity, commercial role, ICP compatibility, individual supplier fit, and evidence of an active opportunity. Do not browse.`
+      ? `You are a B2B distribution verification analyst mapping local distributors of ${brief.supplierName}. Evaluate only supplied candidates; do not invent companies or browse.`
+      : kind === "dump"
+        ? `You are a B2B trade-data verification analyst evaluating companies identified through trade records for ${suppliersLabel(brief, also)}. Verify party roles and product relevance; do not browse.`
+        : `You are a B2B export lead qualification analyst evaluating candidates for ${suppliersLabel(brief, also)} from ${brief.originCountry}. Assess buyer identity, channel fit, supplier fit and active-opportunity evidence; do not browse.`
 
-  const markets =
-    targetCountries(brief).join(", ") ||
-    brief.markets ||
-    "the search country"
+  const markets = targetCountries(brief).join(", ") || brief.markets || "the searched country"
+  const schema =
+    '{ "leads": [{ "company": "", "icp": "high|medium|low", "rationale": "", "supplier_fits": [{ "supplier": "supplier name", "level": "high|medium|low" }], "best_fit": "supplier name|both|neither|unknown", "qualification_needed": "" }], "purchase_probability": "high|medium|low", "purchase_probability_note": "", "entry_strategy": "" }'
 
   return [
-    "# ROLE AND TASK",
+    "# PHASE 4 — OPENAI LEAD QUALIFICATION",
     role,
-    "",
+    `Markets: ${markets}. Evaluate only the supplied candidate cards.`,
     openaiEvidenceSection(brief, also),
-    "",
     openaiScopeSection(brief, also, kind),
-    "",
-    briefUsesAnchorDistributors(brief)
-      ? `${anchorPromptMarkdown(markets)}\n\n`
-      : "",
+    briefUsesAnchorDistributors(brief) ? anchorPromptMarkdown(markets) : "",
     openaiScoringSection(kind),
-    "",
-    "### EVALUATION PROCESS",
-    "For each candidate card:",
-    "1. Verify the company's identity and country using the supplied evidence.",
-    "2. Identify its actual commercial role. Do not infer importer or distributor status from sector membership alone.",
-    "3. Assess its general ICP compatibility against the brief.",
-    "4. Assess supplier_fits independently for each named supplier.",
-    "5. Determine best_fit using the controlled values and rules above.",
-    "6. Evaluate evidence of an active commercial opportunity separately from ICP and supplier compatibility.",
-    "7. List specific qualification gaps. Do not turn missing information into negative facts.",
-    "8. Write a concise rationale based on candidate-specific evidence.",
-    "",
-    "### INPUT",
-    "Candidate cards arrive in the user message inside <candidate_cards>. Evaluate only those candidates.",
-    "",
-    "### OUTPUT CONTRACT",
-    "Preserve the existing JSON output fields and their names.",
-    "The output must contain leads, purchase_probability, purchase_probability_note, and entry_strategy.",
-    "Each lead must contain company, icp, rationale, supplier_fits, best_fit, and qualification_needed.",
-    "Do not add fields or change the output structure.",
-    "",
-    "```output_schema",
-    '{ "leads": [{ "company": "", "icp": "high|medium|low", "rationale": "", "supplier_fits": [{ "supplier": "", "level": "high|medium|low" }], "best_fit": "", "qualification_needed": "" }], "purchase_probability": "high|medium|low", "purchase_probability_note": "", "entry_strategy": "" }',
+    "### OUTPUT",
+    "Return valid JSON only. Preserve exact fields: leads, purchase_probability, purchase_probability_note, entry_strategy. Each lead must contain company, icp, rationale, supplier_fits, best_fit and qualification_needed. Do not add fields.",
+    "```json",
+    schema,
     "```",
   ]
     .filter(Boolean)
-    .join("\n")
-}
-
-function parallelKind(
-  brief: Brief,
-  also?: Brief
-): "buyers" | "prompt" | "competitors" | "dump" {
-  if (brief.searchKind === "competitors" && !also) return "competitors"
-  if (brief.searchKind === "dump") return "dump"
-  if (isPromptOnly(brief) && !also) return "prompt"
-  return "buyers"
+    .join("\n\n")
 }
 
 function parallelEvidenceSection(brief: Brief, also?: Brief): string {
   const sites = [brief.website, also?.website].filter(Boolean)
-
   return [
-    "### INDEPENDENT EVIDENCE VERIFICATION",
-    "Perform a focused verification of the supplied candidate companies. Do not repeat broad market discovery.",
-    "Use current, publicly accessible sources to verify the exact company identity, official website, country operations, commercial role, products, brands, and channels.",
-    "Separate facts, indications, interpretations, and unknowns.",
-    "Absence of public import or purchase data is not proof that the company does not import or buy.",
-    "A shipment record does not prove a purchase from the named supplier.",
-    "A brand mention does not automatically prove official distribution.",
-    "Hiring, social activity, and trade fair participation do not prove purchase intent.",
-    "Do not copy facts from another company, a RAG neighbor, or an anchor profile.",
-    "OpenAI's preliminary classifications are hypotheses to verify, not facts. Change them only when evidence supports the change, and explain why.",
-    "Cite the exact URL for each material claim or classification change.",
-    "Do not invent contacts, volumes, sales, stock, import history, exclusivity, or response rates.",
-    sites.length
-      ? `Do not treat the supplier's own website as a buyer: ${sites.join(" or ")}.`
-      : "",
+    "### INDEPENDENT VALIDATION",
+    "Use current public sources to verify supplied candidates; do not repeat broad discovery.",
+    "Start with the preliminary card and focus on the delta: material gaps, contradictions and new evidence. Change an existing classification only when published evidence directly contradicts a material claim or supports a demonstrably different conclusion. Absence of evidence alone is not grounds to change or downgrade it.",
+    "For each material finding record candidate, date (or undated), exact URL, excerpt and reliability. Separate customs/shipments; purchases/stock; sales/brand performance/channel growth; competitor/portfolio moves; indirect activity.",
+    "A shipment does not prove purchase from the supplier; resale does not prove direct import; a brand mention does not prove official distribution. Social activity, hiring and fairs are indirect signals, not purchase intent. Do not transfer facts between companies or from RAG neighbors.",
+    sites.length ? `Supplier website is not a buyer: ${sites.join(" or ")}.` : "",
   ]
     .filter(Boolean)
     .join("\n")
 }
 
-function parallelScoringSection(
-  kind: "buyers" | "prompt" | "competitors" | "dump"
-): string {
+function parallelScoringSection(kind: PromptKind): string {
   if (kind === "competitors") {
     return [
-      "### VALIDATION CRITERIA",
-      "- Confirm whether the company distributes the named brand or a rival brand in the searched country.",
-      "- `icp` is high only when the relevant distribution role is supported by evidence; medium when plausible but not fully verified; low when evidence shows the company is unrelated.",
-      "- `best_fit` identifies the named brand, `direct competitor`, `neither`, or `unknown` according to the evidence.",
-      "- Do not use unpublished last purchase, stock, or sales data as a reason to assign neither.",
-      "- `purchase_probability` is a qualitative evidence tier, not a statistical probability.",
+      "### VALIDATION",
+      "Set icp from verified local distribution role and category evidence. best_fit is the named brand, 'direct competitor', 'neither' or 'unknown'. Missing purchase/stock/sales data is not grounds for neither. purchase_probability is qualitative, not statistical.",
+    ].join("\n")
+  }
+
+  if (kind === "dump") {
+    return [
+      "### VALIDATION",
+      "Identify each trade-record party correctly (importer, consignee, buyer, exporter, shipper, forwarder, broker or other). Do not label a company as a buyer solely because its name appears in a shipment record.",
+      "Assess ICP and supplier fit from product/category and channel evidence separately from shipment evidence. A trade record alone does not establish last purchase from the named supplier, stock, sales or active buying intent.",
+      "Use the existing best_fit values: supplier name, 'both', 'neither' or 'unknown'. Missing shipment or purchase data is not grounds for neither.",
     ].join("\n")
   }
 
   return [
-    "### VALIDATION CRITERIA",
-    "",
-    "#### 1. Identity and commercial role",
-    "- Verify that the candidate is the correct company and operates in the searched country.",
-    "- Determine whether it is an importer, distributor, wholesaler, retailer, salon, manufacturer, or another business type.",
-    "- Do not infer a role from the company's name or sector alone.",
-    "",
-    "#### 2. ICP and channel compatibility",
-    "- Apply the same ICP definitions used by OpenAI.",
-    "- Assess the buyer type specified in the brief and the company's actual products and channels.",
-    "- A wholesaler or trading company is not automatically less suitable than a distributor if it meets the brief.",
-    "- Missing import data alone must not lower a company's ICP.",
-    "",
-    "#### 3. Individual supplier fit",
-    "- Assess each supplier separately against its own products, channels, must-haves, and exclusions.",
-    "- Do not copy the same supplier fit from one supplier to another.",
-    "- Do not use general ICP as a substitute for individual supplier fit.",
-    "",
-    "#### 4. Best fit",
-    "- Use the same controlled values and definitions as OpenAI: supplier name, `both`, `neither`, or `unknown`.",
-    "- `neither` requires evidence of incompatibility with both suppliers.",
-    "- Use `unknown` when the available evidence does not permit a reliable comparison.",
-    "",
-    "#### 5. Active commercial opportunity",
-    "- Separate commercial compatibility from evidence of an active opportunity.",
-    "- Direct evidence includes requests for prices, catalog, samples, meetings, negotiations, or explicit discussions about adding a brand.",
-    "- Social activity, hiring, fair participation, and general market growth are not direct opportunity evidence.",
-    "- Do not interpret model confidence as purchase or response probability.",
-    "",
-    "#### 6. Audit trail",
-    "- State what was confirmed, what was contradicted, and what remains unknown.",
-    "- Explain any change to OpenAI's preliminary ICP, supplier fit, or best_fit with the supporting URL.",
-    "- Do not change a classification merely because a source did not publish the relevant information.",
+    "### VALIDATION",
+    "ICP measures buyer-role, product/category and channel fit, not purchase intent. Missing information alone is not low.",
+    "Assess each supplier separately. best_fit reflects comparative product and channel compatibility, not recent purchase evidence. Use a supplier name when supported, 'both' when both fit, 'neither' only for demonstrated mismatch, and 'unknown' only when product/channel evidence is insufficient.",
+    "purchase_probability is a qualitative active-opportunity tier, not a statistical forecast. High requires direct recent buyer action; medium means supported product/channel fit with relevant published commercial activity but no direct action; low requires material mismatch. Missing public buying data alone is not low.",
+    "Focus on the delta from OpenAI's preliminary card. Change ratings only with evidence; cite exact URLs and dates. Return concise confirmed facts, contradictions, unknowns and qualification gaps.",
   ].join("\n")
 }
 
 export function parallelInstructions(brief: Brief, also?: Brief): string {
-  const kind = parallelKind(brief, also)
-  const countries = targetCountries(brief)
-
-  const suppliers = also
-    ? `${brief.supplierName} and ${also.supplierName}`
-    : brief.supplierName
-
-  const markets =
-    countries.length
-      ? countries.join(", ")
-      : brief.markets || "unpublished"
-
-  const count =
-    brief.countryCount && brief.countryCount > 0
-      ? brief.countryCount
-      : 5
-
+  const kind = promptKind(brief, also)
+  const markets = targetCountries(brief).join(", ") || brief.markets || "unpublished"
   const role =
     kind === "competitors"
-      ? `You are an independent verification analyst checking local distributors of ${brief.supplierName} from ${brief.originCountry} and their direct competitors.`
-      : `You are an independent B2B lead verification analyst reviewing candidates for ${suppliers} from ${brief.originCountry}. Your task is to verify evidence and stress-test preliminary classifications, not to repeat broad market discovery.`
-
-  const outlook =
-    kind === "competitors"
-      ? countries.length
-        ? `Check only these countries: ${markets}.`
-        : `Cover ${count} countries.`
-      : countries.length
-        ? `The target markets are: ${markets}. Verify only the supplied candidates in these markets.`
-        : `Target markets: ${markets}.`
+      ? `You are an independent B2B distribution verification analyst checking local distribution of ${brief.supplierName} and direct rivals.`
+      : kind === "dump"
+        ? `You are an independent B2B trade-data verification analyst reviewing companies identified through trade records for ${suppliersLabel(brief, also)}.`
+        : `You are an independent B2B lead verification analyst reviewing candidates for ${suppliersLabel(brief, also)} from ${brief.originCountry}. Verify and stress-test preliminary classifications; do not repeat discovery.`
 
   return [
-    "# ROLE AND MISSION",
+    "# PHASE 5 — PARALLEL INDEPENDENT VALIDATION",
     role,
-    "",
+    `Markets: ${markets}. Research only the supplied candidates in these markets.`,
     parallelEvidenceSection(brief, also),
-    "",
     openaiScopeSection(brief, also, kind),
-    `- **Market scope:** ${outlook}`,
-    kind === "competitors" && brief.excludedMarkets
-      ? `- **Excluded countries:** ${brief.excludedMarkets}.`
-      : "",
-    "",
-    briefUsesAnchorDistributors(brief)
-      ? `${anchorPromptMarkdown(markets)}\n\n`
-      : "",
+    briefUsesAnchorDistributors(brief) ? anchorPromptMarkdown(markets) : "",
     parallelScoringSection(kind),
-    "",
-    "### EXECUTION WORKFLOW",
-    "For each supplied candidate:",
-    "1. Verify the exact company identity, official website, and country operations.",
-    "2. Confirm the company's actual commercial role.",
-    "3. Verify relevant products, brands, and customer channels.",
-    "4. Assess whether the evidence supports the preliminary ICP.",
-    "5. Assess each supplier fit independently.",
-    "6. Confirm, revise, or mark best_fit as unknown according to the shared criteria.",
-    "7. Look for direct evidence of openness to new brands or an active commercial opportunity, when available.",
-    "8. Identify contradictions, outdated information, and qualification gaps.",
-    "9. Cite the source URLs supporting material findings and any changes.",
-    "",
-    "### RESEARCH LIMITS",
-    "Do not conduct a broad market report or repeat the original candidate discovery.",
-    "Do not create a new candidate list unless the requested task explicitly requires competitor mapping.",
-    "Do not produce unsupported market statistics or lengthy generic entry strategies.",
-    "Do not treat system scores, model confidence, or preliminary classifications as evidence.",
-    "",
-    "### INPUT",
-    "The supplied candidate cards contain the companies to verify and may contain preliminary OpenAI classifications.",
-    "Research only those companies for lead validation.",
+    "### WORKFLOW",
+    "1. Start with the preliminary card; identify supported claims, unknowns and possible contradictions.",
+    "2. Research only material gaps. Prioritize the five evidence groups, especially recent purchases/imports, stock/restock, measured sales/brand performance, channel expansion and competitor/portfolio moves.",
+    "3. Verify identity, role, product/category fit and channels. Separate direct evidence from indirect indications.",
+    "4. Change preliminary classifications only when evidence supports the change. Do not downgrade because a source is silent.",
+    "5. Return concise corrections, source URLs, dates, reliability and qualification steps. Do not create a new candidate list or broad market report.",
   ]
     .filter(Boolean)
-    .join("\n")
+    .join("\n\n")
 }
 
-function competitorMarketRule(brief: Brief, countries: string[]): string {
-  const markets = countries.length
-    ? countries.join(", ")
-    : "the search countries"
-
-  const origin =
-    brief.originCountry.trim() || "the supplier origin country"
-
-  return [
-    `- Competitors must already sell the relevant category in ${markets}.`,
-    `- Do not list factories, exporters, or brands that only sell in ${origin}.`,
-    "- For each competitor, country means the search market where the company sells, not its headquarters.",
-    `- A brand from ${origin} belongs on the list only when a source shows it selling in a search country; country must then be that search country.`,
-    "- Do not infer a competitor's local distribution from its global presence alone.",
-  ].join("\n")
-}
-
-export function researchPrompt(
-  brief: Brief,
-  leads: Lead[],
-  also?: Brief
-): string {
-  const suppliers = also
-    ? `${brief.supplierName} and ${also.supplierName}`
-    : brief.supplierName
-
-  const cards = leads
-    .map((lead, index) => {
-      const extraction = lead.extraction
-
-      const lines = [
-        `<candidate index="${index + 1}">`,
-        `- **Name:** ${lead.name}`,
-        lead.market ? `- **Market:** searched for ${lead.market}` : "",
-        lead.buyerType ? `- **Buyer type:** searched as ${lead.buyerType}` : "",
-        `- **URL:** ${lead.url}`,
-        `- **Country:** ${extraction?.country || lead.country || "unpublished"}`,
-        extraction?.role ? `- **Role:** ${extraction.role}` : "",
-        extraction?.buys?.length
-          ? `- **Buys:** ${extraction.buys.slice(0, 4).join("; ")}`
-          : "",
-        extraction?.sells?.length
-          ? `- **Sells:** ${extraction.sells.slice(0, 4).join("; ")}`
-          : "",
-        extraction?.keyPerson
-          ? `- **Key person:** ${extraction.keyPerson}${extraction.keyPersonRole ? ` (${extraction.keyPersonRole})` : ""}`
-          : "",
-        extraction?.email ? `- **Email:** ${extraction.email}` : "",
-        extraction?.phone ? `- **Phone:** ${extraction.phone}` : "",
-        extraction?.whatsapp ? `- **WhatsApp:** ${extraction.whatsapp}` : "",
-        extraction?.latestHires?.length
-          ? `- **Latest hires:** ${extraction.latestHires.slice(0, 3).join("; ")}`
-          : "",
-        lead.openai
-          ? `- **OpenAI preliminary:** icp ${lead.openai.icp}; best_fit ${lead.openai.bestFit}. ${clip(lead.openai.rationale, 180)}`
-          : "- **OpenAI preliminary:** unscored.",
-        activityLine(lead)
-          ? `- **Activity:** ${activityLine(lead)}`
-          : "",
-        buyingEvidenceLine(lead)
-          ? `- **Buying evidence signal (system-generated, unverified):** ${buyingEvidenceLine(lead)}`
-          : "",
-        ragLine(lead)
-          ? `- **RAG reference (not company-specific evidence):** ${ragLine(lead)}`
-          : "",
-        `- **Fit-probability signal (system-generated, not independent evidence):** ${fitProbabilityLine(lead.fit ?? computeFitProbability(brief, lead))}`,
-        `- **Excerpt:** ${clip(extraction?.summary || lead.exa.summary || lead.exa.text, 180)}`,
-        `</candidate>`,
-      ]
-
-      return lines.filter(Boolean).join("\n")
-    })
-    .join("\n")
-
+export function researchPrompt(brief: Brief, leads: Lead[], also?: Brief): string {
+  const suppliers = suppliersLabel(brief, also)
   const instructions = parallelInstructions(brief, also)
+  const header = `${instructions}\n\n### CANDIDATE EVIDENCE\n`
+  const maxLength = 20000
+  const room = Math.max(0, maxLength - header.length)
+
+  const cards = leads.map((lead, index) => {
+    const extraction = lead.extraction
+    const activity = (lead.activity?.signals ?? []).slice(0, 3).map((signal) =>
+      `activity=${signal.kind}; date=${signal.publishedAt || "undated"}; url=${signal.url}; excerpt=${clip(signal.quote || signal.title, 120)}`,
+    )
+    const commerce = (lead.commerce?.signals ?? []).slice(0, 4).map((signal) =>
+      `commerce=${signal.kind}; source=${signal.source || "exa"}; date=${signal.publishedAt || "undated"}; url=${signal.url}; excerpt=${clip(signal.quote || signal.title, 130)}`,
+    )
+
+    return [
+      `<candidate index="${index + 1}">`,
+      `company=${lead.name}; searched_market=${lead.market || lead.country || "unpublished"}; official_url=${lead.url}`,
+      `country=${extraction?.country || lead.country || "unpublished"}; role=${extraction?.role || "unpublished"}; buyer_type=${lead.buyerType || "unpublished"}`,
+      "Note: official_url identifies the candidate site; it is not automatically the source for every extracted claim. Verify claim-specific dates and URLs before relying on them.",
+      extraction?.buys?.length ? `products_bought=${extraction.buys.slice(0, 4).join("; ")}` : "products_bought=unpublished",
+      extraction?.sells?.length ? `products_sold=${extraction.sells.slice(0, 4).join("; ")}` : "products_sold=unpublished",
+      extraction?.lastPurchase ? `last_purchase=${clip(extraction.lastPurchase, 180)}` : "last_purchase=unpublished",
+      extraction?.stock ? `stock=${clip(extraction.stock, 180)}` : "stock=unpublished",
+      extraction?.brandPerformance ? `brand_performance=${clip(extraction.brandPerformance, 180)}` : "brand_performance=unpublished",
+      extraction?.salesNote ? `sales=${clip(extraction.salesNote, 180)}` : "sales=unpublished",
+      extraction?.competitorMoves?.length ? `competitor_moves=${extraction.competitorMoves.slice(0, 3).map((item) => clip(item, 140)).join("; ")}` : "competitor_moves=unpublished",
+      extraction?.keyPerson ? `key_contact=${clip(extraction.keyPerson, 100)}${extraction.keyPersonRole ? ` (${clip(extraction.keyPersonRole, 80)})` : ""}` : "key_contact=unpublished",
+      extraction?.email ? `email=${clip(extraction.email, 120)}` : "",
+      extraction?.phone ? `phone=${clip(extraction.phone, 80)}` : "",
+      extraction?.whatsapp ? `whatsapp=${clip(extraction.whatsapp, 80)}` : "",
+      extraction?.latestHires?.length ? `latest_hires=${extraction.latestHires.slice(0, 2).map((item) => clip(item, 100)).join("; ")}` : "",
+      lead.openai ? `preliminary_openai=ICP ${lead.openai.icp}; best_fit ${lead.openai.bestFit}; ${clip(lead.openai.rationale, 160)}` : "preliminary_openai=unscored",
+      activity.length ? `indirect_activity_signals:\n${activity.join("\n")}` : "indirect_activity_signals=none supplied",
+      commerce.length ? `commercial_signals:\n${commerce.join("\n")}` : "commercial_signals=none supplied",
+      `activity_search_status=${clip(activityLine(lead), 180)}`,
+      `rag_context_only (not evidence; do not transfer neighbor facts): ${clip(ragLine(lead), 180)}`,
+      "</candidate>",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  })
+
+  const selected: string[] = []
+  let used = 0
+  for (const card of cards) {
+    const addition = `${selected.length ? "\n" : ""}${card}`
+    if (used + addition.length > room) break
+    selected.push(card)
+    used += addition.length
+  }
 
   const payload = [
-    "```input_data",
-    `Suppliers to evaluate: ${suppliers}, from ${brief.originCountry}.`,
-    "PRELIMINARY CANDIDATE CARDS:",
-    "<candidate_cards>",
-    cards,
-    "</candidate_cards>",
-    "```",
-  ].join("\n")
+    `Suppliers: ${suppliers}; origin: ${brief.originCountry}.`,
+    `Candidates included: ${selected.length} of ${leads.length}. Do not assume omitted candidates were evaluated.`,
+    "RAG may provide historical context for the exact company only. Similarity is not evidence and a neighbor is a different company.",
+    ...selected,
+  ].join("\n\n")
 
-  const header = `${instructions}\n\n`
-  const room = Math.max(0, 20000 - header.length)
-
-  return `${header}${payload.slice(0, room)}`
+  return `${header}${payload}`
 }
 
 export function diligenceInstructions(brief: Brief, brand: string): string {
@@ -836,7 +618,7 @@ export function diligenceInstructions(brief: Brief, brand: string): string {
     "Do not return an opportunity score or a confidence level. The desk calculates those from the facts.",
     "Separate facts, indications, interpretations, and items that still need a human. If a search found nothing, that is absence, not proof of the opposite.",
     "Not finding an import record does not mean the company does not import.",
-    "priority of pursue, if you mention it, would only mean a salesperson should approach — never a confirmed purchase.",
+    "Priority of pursue, if mentioned, means only that a salesperson should approach — never a confirmed purchase.",
     "Quote URLs already in the dossier. Leave a field empty when unpublished.",
   ].join(" ")
 }
