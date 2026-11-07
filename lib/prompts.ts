@@ -19,37 +19,30 @@ function extra(brief: Brief): string {
   const note = brief.instructions?.trim()
   return note ? `Additional instructions: ${note}` : ""
 }
-
 /**
  * Hierarchy of pages to prioritize when crawling.
  * Added explicit preference for pages that state distribution/brand portfolios
  * over generic "about us" content — reduces noise in extraction.
  */
 function firecrawlContactAsk(): string {
-  return [
-    "Crawl the company's official website, prioritizing pages that explicitly state distribution agreements, brand portfolios, wholesale terms, or product listings, before generic 'about us' content.",
-    "Relevant pages include: home, about, products, brands, distribution, wholesale, contact, team, and country-specific pages.",
-    "Search the web for the same company to corroborate its identity, country operations, commercial role, portfolio, and recent activity.",
-    "Collect only published business contacts: key person, role, email, WhatsApp, phone, and official website.",
-    "Leave unpublished fields empty. Never guess names, emails, addresses, phone numbers, or job titles.",
-    "Distinguish facts found on the official website from information found on third-party sources.",
-  ].join(" ")
+return [
+"Crawl the company's official website, prioritizing pages with explicit distribution agreements, brand portfolios, product listings, or wholesale terms over generic 'about us' content. Include home, about, products, brands, distribution, wholesale, contact, team, and country-specific pages.",
+"Search the web for the same company to corroborate its identity, country operations, commercial role, portfolio, and recent activity.",
+"Collect only published business contacts: key person, role, email, WhatsApp, phone, and official website.",
+"Leave unpublished fields empty. Never guess names, emails, addresses, phone numbers, or job titles.",
+"Distinguish facts found on the official website from information found on third-party sources.",
+].join(" ")
 }
 
-/**
- * Tightened definition of buyerSignals: concrete, published commercial evidence only.
- * Explicitly excludes generic descriptions, fair participation, and social mentions.
- */
 function exaBuyerSignalAsk(brief?: Brief): string {
-  return [
-    "Return a short buyerSignals field listing only concrete, published evidence of commercial role: specific brands distributed, named customer channels (wholesale/retail/salon), import or wholesale activity, or named customers.",
-    "Exclude generic company descriptions, trade fair participation, social media activity, hiring announcements, and mere brand mentions — these are not proof of import activity or willingness to buy.",
-    brief ? firecrawlAnchorLine(brief) : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
+return [
+"Return a short buyerSignals field listing only concrete, published evidence of commercial role: specific brands distributed, named customer channels (wholesale/retail/salon), import or wholesale activity, or named customers.",
+"Exclude generic company descriptions, trade fair participation, social media activity, hiring announcements, and mere brand mentions — these are not proof of import activity or willingness to buy.",
+brief ? firecrawlAnchorLine(brief) : "",
+]
+.filter(Boolean)
+.join(" ")
 }
-
 /**
  * Canonical evidence rule. Other sections reference this instead of repeating
  * the same 12 lines — reduces signal dilution in the prompt.
