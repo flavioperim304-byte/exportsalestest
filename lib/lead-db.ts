@@ -1,4 +1,5 @@
 import { Pool, type PoolClient } from "pg"
+import { newSignalEvents } from "./signals/events"
 import { databaseHintFromUrl, explainPostgresError } from "./database-url"
 import { stampIntelligence } from "./intelligence"
 import { envDatabaseUrl, getDatabaseUrl } from "./keys"
@@ -586,6 +587,26 @@ export async function pgSaveRun(run: Run): Promise<void> {
             ]
           )
         }
+      }
+      // Intent-signal events (lib/signals): one row per new event, existing table, no schema change.
+      for (const event of newSignalEvents(previousLead, lead)) {
+        await client.query(
+          `INSERT INTO ${DESK_LEAD_EVENTS_TABLE} (
+             id, company_id, run_id, lead_id, at, source, kind, summary, before_state, after_state
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9::jsonb)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            `${run.id}:${lead.id}:${event.id}`,
+            companyId,
+            run.id,
+            lead.id,
+            event.detectedAt,
+            event.source,
+            `signal:${event.type}`,
+            (event.evidence.title || event.subtype).slice(0, 220),
+            JSON.stringify(event),
+          ]
+        )
       }
       const row = toLeadRecord(run, lead)
       await client.query(

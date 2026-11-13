@@ -1,0 +1,10 @@
+{
+  "note": "Leads informadas pelo usuário em 2026-11-12. countryConfirmed=false: país deduzido do domínio, aguardando confirmação.",
+  "leads": [
+    { "id": "t1", "name": "Productos WOW S.A.S.", "url": "https://www.productoswow.com/", "country": "Colombia", "countryConfirmed": true, "origin": "execução salva no projeto (seed-runs.json)" },
+    { "id": "t2", "name": "Agencia y Mercadeo", "url": "https://www.agenciaymercadeo.com/", "country": "Panama", "countryConfirmed": true, "origin": "usuário" },
+    { "id": "t3", "name": "Euro Style S.A.S.", "url": "https://eurostylesas.com/", "country": "Colombia", "countryConfirmed": true, "origin": "execução salva no projeto (seed-runs.json)" },
+    { "id": "t4", "name": "Grupo Dipaso", "url": "https://www.dipaso.com.ec/", "country": "Ecuador", "countryConfirmed": false, "origin": "usuário (site); país deduzido de .ec" },
+    { "id": "t5", "name": "Glowy", "url": "https://glowy.pe/", "country": "Peru", "countryConfirmed": false, "origin": "usuário (site); país deduzido de .pe" }
+  ]
+}

@@ -516,6 +516,108 @@ export type Lead = {
   rag?: RagMatch
   /** Commercial due diligence reports, newest last. One brand per report. */
   diligence?: DiligenceReport[]
+  /** Append-only intent-signal events (lib/signals). Never overwritten; deduplicated by id. */
+  signalEvents?: SignalEvent[]
+  /** One record per execution of the versioned signals stage, newest last. */
+  signalScans?: SignalScan[]
+  /** Signal uplift applied on top of each model's ICP. Never lowers the model's level. */
+  signalUplift?: { openai?: SignalUplift; parallel?: SignalUplift }
+}
+
+export type SignalUpliftRule = "cap_medium_without_buy_fact" | "no_cap"
+
+export type SignalUplift = {
+  /** Level the model returned, before any signal effect. */
+  from: "high" | "medium" | "low"
+  /** Level after the uplift. Always >= from. */
+  to: "high" | "medium" | "low"
+  /** Sum of weights of the distinct qualifying signal types. */
+  points: number
+  /** True when the rule held the level below what the points allowed. */
+  capped: boolean
+  rule: SignalUpliftRule
+  hasBuyFact: boolean
+  /** Qualifying types and the event ids behind each. */
+  types: Partial<Record<SignalType, string[]>>
+  version: string
+  appliedAt: string
+}
+
+/** Normalized intent-signal type. `subtype` keeps the provider's own label unchanged. */
+export type SignalType =
+  | "hiring"
+  | "expansion"
+  | "product_launch"
+  | "event"
+  | "news"
+  | "commercial_activity"
+  | "buyer_intent"
+  | "other"
+
+export type SignalSource = "autobound" | "exa"
+
+export type SignalConfidenceLevel = "high" | "medium" | "low"
+
+export type SignalConfidence = {
+  level: SignalConfidenceLevel
+  /** Provider-supplied confidence, unchanged, when the provider returns one. */
+  providerValue?: number
+  /** Which rule set the level. */
+  basis: string
+}
+
+export type SignalEvidence = {
+  url: string
+  title?: string
+  quote?: string
+}
+
+export type SignalEvent = {
+  /** Deterministic: source + type + url + occurredAt. Same fact, same id. */
+  id: string
+  type: SignalType
+  /** Provider type/subtype exactly as returned (e.g. "news/productLaunch", "hiring-trends"). */
+  subtype: string
+  /** Which provider field set the normalized type. */
+  classifiedBy?: "provider_type" | "provider_tags"
+  /** Provider's own tags, unchanged, when present. */
+  providerTags?: string[]
+  /** When the fact happened or was published, as stated by the source. Absent when the source gives no date. */
+  occurredAt?: string
+  /** When this desk captured the event. */
+  detectedAt: string
+  source: SignalSource
+  sourceSignalId?: string
+  confidence: SignalConfidence
+  evidence: SignalEvidence
+  /** Version of the stage that produced the event, e.g. signals-autobound@1.0.0. */
+  stageVersion: string
+  runId?: string
+}
+
+export type SignalTypeStatus = "found" | "not_found" | "error" | "skipped_budget" | "not_requested"
+
+export type SignalScan = {
+  stageVersion: string
+  source: SignalSource
+  runId?: string
+  startedAt: string
+  finishedAt: string
+  status: "done" | "error" | "skipped_budget" | "skipped_no_domain" | "skipped_no_topics" | "dry_run"
+  /** Which Autobound endpoint the scan used. Absent means company enrich. */
+  endpoint?: "enrich" | "intent_timeline"
+  /** found / not_found / error per normalized type. */
+  types: Partial<Record<SignalType, SignalTypeStatus>>
+  /** Worst-case credits charged against the run budget (2 per returned signal). */
+  creditsEstimated: number
+  /** Credit headers exactly as returned by the provider, when present. */
+  creditsReported?: Record<string, string>
+  eventsAdded: number
+  /** Results dropped because they had no evidence URL. */
+  discarded: number
+  error?: string
+  /** The request that was (or would be) sent, without credentials. */
+  request?: { endpoint: string; body: Record<string, unknown> }
 }
 
 export type RagMatch = {

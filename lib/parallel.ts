@@ -1,6 +1,7 @@
 import type { Brief, Competitor, Lead, MarketContext } from "./types"
 import { ApiError, requestJson } from "./http"
 import { evidenceRule, researchPrompt } from "./prompts"
+import { modelIcp, signalCardLines } from "./signals/uplift"
 import { ragLine } from "./rag"
 import { asString, asStringArray } from "./text"
 
@@ -355,7 +356,7 @@ function clipState(state: Record<string, unknown>): Record<string, unknown> {
   let prompt = asString(state.prompt)
   let evidence = asString(state.evidence)
   const candidates = Array.isArray(state.candidates)
-    ? (state.candidates as { note?: string; rag?: string }[])
+    ? (state.candidates as { note?: string; rag?: string; signals?: string }[])
     : []
   const sized = () => JSON.stringify({ ...state, prompt, evidence, candidates }).length
   while (sized() > DECISION_STATE_CHARS && candidates.some((item) => (item.note ?? "").length > 40)) {
@@ -366,6 +367,11 @@ function clipState(state: Record<string, unknown>): Record<string, unknown> {
   while (sized() > DECISION_STATE_CHARS && candidates.some((item) => (item.rag ?? "").length > 40)) {
     for (const item of candidates) {
       if ((item.rag ?? "").length > 40) item.rag = (item.rag ?? "").slice(0, 40)
+    }
+  }
+  while (sized() > DECISION_STATE_CHARS && candidates.some((item) => (item.signals ?? "").length > 80)) {
+    for (const item of candidates) {
+      if ((item.signals ?? "").length > 80) item.signals = (item.signals ?? "").slice(0, 80)
     }
   }
   while (sized() > DECISION_STATE_CHARS && evidence.length > 200) {
@@ -458,7 +464,8 @@ export function buildDecisionRequests(brief: Brief, leads: Lead[], also?: Brief)
       country: lead.market || lead.extraction?.country || lead.country,
       url: lead.url,
       role: lead.extraction?.role ?? "",
-      preliminary: lead.openai?.icp ?? "",
+      preliminary: modelIcp(lead, "openai") ?? "",
+      signals: signalCardLines(lead, 3).join(" | ").slice(0, 300),
       note: (lead.extraction?.summary || lead.exa.summary || lead.exa.text || "").slice(0, 180),
       rag: ragLine(lead),
     })),

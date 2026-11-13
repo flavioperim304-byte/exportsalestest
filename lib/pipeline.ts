@@ -1,5 +1,7 @@
 import { emptyActivity, searchActivity } from "./activity"
 import { emptyCommerce, searchCommerce } from "./commerce"
+import { attachMissingSignals } from "./signals/stage"
+import { applyUplift } from "./signals/uplift"
 import { applyFilingToLead } from "./trade-records"
 import { listFilings } from "./trade-store"
 import {
@@ -162,6 +164,8 @@ function applyResearch(
       bestFit: note.bestFit,
       qualificationNeeded: note.qualificationNeeded,
     }
+    // Signal uplift on Parallel's ICP: never lowers it; best_fit is untouched.
+    applyUplift(lead, "parallel", { fresh: true })
   }
   if (unmatched.length) {
     log(
@@ -893,6 +897,8 @@ function applyOpenAI(run: Run, judgments: Awaited<ReturnType<typeof scoreLeads>>
       qualificationNeeded: note.qualificationNeeded,
       rationale: note.rationale,
     }
+    // Signal uplift on OpenAI's ICP: never lowers it; best_fit is untouched.
+    applyUplift(lead, "openai", { fresh: true })
   }
 }
 
@@ -1073,6 +1079,9 @@ async function doScore(id: string) {
   if (activity === "wait") return
   const commerce = await attachMissingCommerce(id)
   if (commerce === "wait") return
+  // Versioned Autobound signals step. No-op without AUTOBOUND_API_KEY.
+  const signals = await attachMissingSignals(id)
+  if (signals === "wait") return
   await attachCustomsRecords(id)
   await attachRag(id)
   const current = (await getRun(id)) ?? snapshot

@@ -5,6 +5,7 @@ import {
   firecrawlAnchorLine,
 } from "./anchors"
 import { ragLine } from "./rag"
+import { SIGNAL_SCORING_RULE, modelIcp, signalCardLines } from "./signals/uplift"
 import type { Brief, Lead } from "./types"
 import { clip, splitList } from "./text"
 
@@ -462,6 +463,8 @@ export function openaiInstructions(brief: Brief, also?: Brief): string {
     openaiScopeSection(brief, also, kind),
     briefUsesAnchorDistributors(brief) ? anchorPromptMarkdown(markets) : "",
     openaiScoringSection(kind),
+    "### SIGNALS",
+    SIGNAL_SCORING_RULE,
     "### OUTPUT",
     "Return valid JSON only. Preserve exact fields: leads, purchase_probability, purchase_probability_note, entry_strategy. Each lead must contain company, icp, rationale, supplier_fits, best_fit and qualification_needed. Do not add fields.",
     "```json",
@@ -530,6 +533,8 @@ export function parallelInstructions(brief: Brief, also?: Brief): string {
     openaiScopeSection(brief, also, kind),
     briefUsesAnchorDistributors(brief) ? anchorPromptMarkdown(markets) : "",
     parallelScoringSection(kind),
+    "### SIGNALS",
+    SIGNAL_SCORING_RULE,
     "### WORKFLOW",
     "1. Start with the preliminary card; identify supported claims, unknowns and possible contradictions.",
     "2. Research only material gaps. Prioritize the five evidence groups, especially recent purchases/imports, stock/restock, measured sales/brand performance, channel expansion and competitor/portfolio moves.",
@@ -574,9 +579,10 @@ export function researchPrompt(brief: Brief, leads: Lead[], also?: Brief): strin
       extraction?.phone ? `phone=${clip(extraction.phone, 80)}` : "",
       extraction?.whatsapp ? `whatsapp=${clip(extraction.whatsapp, 80)}` : "",
       extraction?.latestHires?.length ? `latest_hires=${extraction.latestHires.slice(0, 2).map((item) => clip(item, 100)).join("; ")}` : "",
-      lead.openai ? `preliminary_openai=ICP ${lead.openai.icp}; best_fit ${lead.openai.bestFit}; ${clip(lead.openai.rationale, 160)}` : "preliminary_openai=unscored",
+      lead.openai ? `preliminary_openai=ICP ${modelIcp(lead, "openai")}; best_fit ${lead.openai.bestFit}; ${clip(lead.openai.rationale, 160)}` : "preliminary_openai=unscored",
       activity.length ? `indirect_activity_signals:\n${activity.join("\n")}` : "indirect_activity_signals=none supplied",
       commerce.length ? `commercial_signals:\n${commerce.join("\n")}` : "commercial_signals=none supplied",
+      signalCardLines(lead).length ? `detected_signals:\n${signalCardLines(lead).join("\n")}` : "detected_signals=none",
       `activity_search_status=${clip(activityLine(lead), 180)}`,
       `rag_context_only (not evidence; do not transfer neighbor facts): ${clip(ragLine(lead), 180)}`,
       "</candidate>",

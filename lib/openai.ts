@@ -1,4 +1,5 @@
 import { activityLine } from "./activity"
+import { signalCardLines } from "./signals/uplift"
 import { buyingEvidenceLine, computeFitProbability, fitProbabilityLine } from "./fit-probability"
 import type { Brief, DiligenceFinding, DiligenceProbe, FitJudgment, Lead } from "./types"
 import { ApiError, requestJson } from "./http"
@@ -169,6 +170,7 @@ function cards(brief: Brief, leads: Lead[]): string {
         extraction?.latestHires?.length ? `- **Latest hires:** ${extraction.latestHires.slice(0, 3).join("; ")}` : "",
         extraction?.buys?.length ? `- **Buys:** ${extraction.buys.slice(0, 4).join("; ")}` : "",
         activityLine(lead) ? `- **Activity:** ${activityLine(lead)}` : "",
+        signalCardLines(lead).length ? `- **Signals:**\n${signalCardLines(lead).join("\n")}` : "- **Signals:** none detected",
         buyingEvidenceLine(lead) ? `- **Buying evidence:** ${buyingEvidenceLine(lead)}` : "",
         ragLine(lead) ? `- **RAG:** ${ragLine(lead)}` : "",
         `- **Fit-probability:** ${fitProbabilityLine(lead.fit ?? computeFitProbability(brief, lead))}`,
