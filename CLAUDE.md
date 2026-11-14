@@ -54,6 +54,28 @@ O Autobound foi reprovado no teste real e deve ser removido da branch sinais-v1.
 O usuário vai escolher outra API de sinais. Até lá, não integrar nenhuma API de sinais nova.
 Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
 
+## Avaliação do dashboard de produção (14/11/2026, só leitura)
+Fonte: https://exportsales.onrender.com, lida via WebFetch até 500 mil de 542 mil caracteres. Os resumos são de um modelo menor: contagens indicativas, não conferidas uma a uma. Nada foi alterado.
+- Relevância: ficam na lista leads que o próprio cartão desqualifica. Exclusivo de outra marca (Robson Peluquero RP Maroc: "do not pitch replacement"; IphaCare: "do not pursue"); varejo e não importador (Cadiveu Paquistão, Majo Belleza); outra categoria (Cosmake).
+- Score não diferencia: nenhum fit alto visto. Trecho 300–400 mil: alto 0, médio 1, baixo 47. Trecho 400–500 mil: alto 0, médio 3, baixo 43. Notas iguais em série (Uganda fit 18; Reino Unido fit 10 / resposta 12; Rep. Dominicana 0/0).
+- Leitura não verificada no código: o fit ("evidence index") depende de última compra, estoque, desempenho de marca, vendas e movimento de concorrente, fatos que quase ninguém publica. Por isso fica baixo por construção.
+- Texto × número: pelo menos 15 cartões dizem fit médio ou alto no texto com rótulo baixo (ex.: Ormate, Qureshi).
+- Evidência "publicada" que o próprio texto nega (mesmo tipo do caso Dipaso): Glaze Beaute (vendas = contador de marketing), Sunpac (estoque sem URL e campo vazio), ABAQ e Beauty Circles (desempenho de marca não publicado).
+- Best fit: o cabeçalho mostra as duas opções, não a escolhida; 13 cartões sem best fit; contradições (Probela, BIOHAIR). Best fit Kanechom sem evidência no Reino Unido (FDD, HAZ, Janson: fit 10). A mesma empresa com resultados diferentes por fornecedor (COFACA: Kanechom 0/0; LQ 10/32, best fit LQ).
+- Evidência com URL: quase nenhuma compra, estoque ou venda recente com URL. Melhor caso: Evergreen Glow (estoque declarado pela empresa e anúncio de 02/11/2026). As demais URLs são antigas ou de outra categoria.
+- Contato: Email e Telefone vazios com o contato citado no texto (Grupo Moreno/PECOSA, Oganem Natur). Muitas leads sem contato (Dipaso, Bethel, Crisma, Macronegocios, BBS PRO, Capellia). Nenhum decisor nomeado.
+- Outros: "Atividade pública: not searched" em todos os cartões. Linha de exportação Brasil → país é do mercado, repetida em todos os cartões do país. Leads duplicadas (Baja Beauty, Beauty Art, Círculo de Belleza, Grupo La Belleza, Multiplex, MVP, Unipinho). Sem campo de Fonte.
+- Segurança (não conferida a fundo): página pública sem login, mostra emails e telefones, botão "Baixar código (.zip)". O dashboard mostra 239 empresas; o Supabase tem 50 linhas (última em 05/11), ou seja, não lê o Supabase.
+- Manter: best fit removido sem compra, estoque, vendas ou reposição publicados; dump e Atlas não sobem para alta; ICP de canal não é intenção.
+Melhorias propostas (cada uma com plano, autorização e teste real; mesmas buscas, antes × depois):
+1. Filtro de relevância antes do score: exclusivo de concorrente, só varejo, outra categoria e exclusão de multinacional vão para "descartadas com motivo" (regra C; etapas 2 e 4).
+2. Score calculado pelo código a partir de evidência tipada com URL (Regras de sinais). O modelo só classifica.
+3. Base do fit = perfil (categoria, marcas estrangeiras, canal) + intenção (sinais datados), no lugar de fatos comerciais raramente publicados. Depende da decisão pendente sobre a regra de sinais.
+4. Best fit único e explícito (Kanechom, LQ ou nenhum), com motivo e URL; nunca sem evidência. Um registro por empresa, com o resultado por fornecedor dentro dele.
+5. Verificação automática de consistência (rótulo × número; todo item "publicado" com URL; texto × bloco), como teste e relatório, sem mudar a tela.
+6. Deduplicar pelo domínio no pipeline. Preencher Email e Telefone existentes só com contato que tenha URL de origem.
+Mudanças na tela (rótulo "dado do país", cabeçalho do best fit, login, botão .zip) só com exceção autorizada pelo usuário.
+
 ## Plano (ordem de execução; cada etapa com plano, autorização e teste real)
 1. Enriquecimento: sair do Autobound. Remover da branch sinais-v1.1 todo o código do Autobound. Manter o registro de sinais como eventos (data, tipo, fonte, URL), alimentado pela Exa. Status: feito nos commits d6b8845 e 5a183a7; falta o teste real confirmar.
 2. Enriquecimento: Firecrawl e Exa.
@@ -73,8 +95,8 @@ Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
      Pendente do usuário: aplicar a leitura nova também no lead-refresh.ts? Medir o M1 nas 3 leads que faltaram (~100 créditos) ainda é necessário?
    - Exa: busca mais precisa pelo ICP, pelas marcas e pelos produtos, e correção dos falsos positivos (caso Glowy).
 3. Prompts: ajustar mantendo as regras do AGENTS.md: a regra de evidência na primeira frase, a seção "EVIDENCE RULE" e o ragLine em todo cartão.
-4. Score e best fit (OpenAI): regras baseadas só em evidência com fonte. Corrigir a falsa "prova de estoque" (caso Dipaso).
-5. Best fit final (Parallel): regras da revisão final.
+4. Score e best fit (OpenAI): regras baseadas só em evidência com fonte. Corrigir a falsa "prova de estoque" (caso Dipaso). Entrada: "Avaliação do dashboard de produção", melhorias 1 a 5.
+5. Best fit final (Parallel): regras da revisão final. Entrada: "Avaliação do dashboard de produção", melhoria 4 (best fit único, com motivo e URL).
 6. Supabase + Exa Monitor: nova tabela com as leads salvas. O best fit é atualizado com os sinais novos que o Exa Monitor encontrar.
    Observação: pelo README, o Exa Monitor já existe na produção (um por best fit, período de 15 dias, webhook do serviço exportsales). O que falta é ligar os resultados do Monitor às tabelas novas e à atualização do best fit.
 7. RAG, memória e aprendizado (depende da etapa 6). Os modelos não aprendem sozinhos: aprendizado = guardar resultados reais e recalibrar regras e RAG, sempre com números.
