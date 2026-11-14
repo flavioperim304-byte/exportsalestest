@@ -82,6 +82,14 @@ Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
    - Aprendizado das regras: comparar periodicamente os sinais de quem respondeu × quem não respondeu e propor ajuste dos pesos da regra de sinais, mostrando os números.
    - Aprendizado do RAG: incluir no índice as leads que responderam ou compraram como exemplos do perfil certo (exige mudar o serviço exportsales2). A regra continua: vizinho do RAG é outra empresa e nunca conta como compra.
    - Pendente do usuário: onde hoje fica registrado se uma lead respondeu (planilha, CRM, email) e o que está no índice do RAG hoje.
+   - Arquitetura de memória (referência: diagrama de memória para agentes enviado pelo usuário em 14/11; recomendação "comece simples"):
+     a) Memória em arquivos (regras e decisões): CLAUDE.md, AGENTS.md, .cursor/rules/no-invention.mdc. Já em uso.
+     b) Fatos com validade: em export_intelligence_leads, guardar cada fato da empresa (marcas, contatos, exclusividade, sinais) com data, fonte, URL e validade. Usar Postgres (Supabase); não criar banco de grafo.
+     c) Memória de desfechos de contato (contatada, respondeu, reunião, venda, descartada com motivo).
+     d) Roteador (o que guardar): só fato com URL, desfecho de contato e decisão do usuário. Nada inferido. Sinais com mais de 24 meses perdem validade.
+     e) Uso no score: incluir no cartão de OpenAI e Parallel os fatos válidos da empresa, o histórico de contatos e as leads parecidas que responderam (respeitando ragLine e EVIDENCE RULE).
+     f) Memória vetorial por último: verificar o RAG atual (Chroma no exportsales2) e decidir, com teste real comparativo, entre manter o Chroma ou migrar para pgvector no Supabase. Riscos: semelhança engana; fatos velhos voltam sem deduplicação.
+     Ordem: a (feito) → b junto com a etapa 6 → c → e junto com as etapas 3 e 4 → f.
 
 ## Supabase (pré-requisito da etapa 6)
 - Projeto único: xtmixcnaojzcrwcbxcnw. É o mesmo banco da produção (tabelas desk_runs, desk_leads, desk_lead_events).
