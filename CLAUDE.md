@@ -58,6 +58,18 @@ Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
 1. Enriquecimento: sair do Autobound. Remover da branch sinais-v1.1 todo o código do Autobound. Manter o registro de sinais como eventos (data, tipo, fonte, URL), alimentado pela Exa. Status: feito nos commits d6b8845 e 5a183a7; falta o teste real confirmar.
 2. Enriquecimento: Firecrawl e Exa.
    - Firecrawl: medir primeiro, depois resolver o timeout e trazer contato de pessoa, email e WhatsApp, cada um com a URL de origem.
+     Medição real feita em 14/11/2026 (5 leads do scripts/signals-leads.json; cenário da execução salva 1f9a9822: LQ professional, Brasil, HS 330590; teto aprovado de 100 créditos, gasto 112 — estouro de 12 por erro do Claude no controle do teto).
+     - M1 (método atual: extract do site inteiro + espera de 70 s + leitura rápida): medido só em 2 leads. Productos WOW 26,1 s (só WhatsApp e website), Agencia y Mercadeo 13,2 s (só website). Cerca de 33–34 créditos por lead. O extract não informa a URL de origem de cada contato.
+     - M2 (proposto: map do site → página inicial + página de contato, com cabeçalho e rodapé, mesmo esquema): 5 leads, 10–22 s e 6–11 créditos por lead. Email ou telefone em 4 de 5 (Productos WOW, Agencia y Mercadeo, Euro Style, Glowy), cada um com a URL de origem. Dipaso: nenhum contato e página de contato não encontrada.
+     - Pessoa-chave (decisor): nenhum dos dois métodos encontrou, em nenhuma lead.
+     - Timeout: não reproduzido (os 2 M1 terminaram abaixo de 70 s). A causa segue desconhecida. Hipótese não verificada: com uma lead por vez e até ~95 s cada, 10 leads passam do teto de 8 min da etapa.
+     - Glowy: o email publicado em glowy.pe/contacto é de outro domínio (ventaonline@maxitienda.pe). Relação entre as empresas: não sei.
+     Pendente (Fase B, aguarda autorização do usuário):
+     1. Trocar o extract pelo M2 (map → página inicial + página de contato, incluindo cabeçalho e rodapé).
+     2. Gravar a URL de origem de cada contato em campos novos, sem remover campos existentes e sem mudar o dashboard.
+     3. Ler várias leads ao mesmo tempo, respeitando o limite do Firecrawl (10 scrapes por minuto), com limite de tempo por lead.
+     4. Testar com APIs reais antes de afirmar que funciona.
+     Decisões do usuário: medir o M1 nas 3 leads que faltaram (Euro Style, Dipaso, Glowy; ~100 créditos)? Encontrar o decisor fica como passo separado.
    - Exa: busca mais precisa pelo ICP, pelas marcas e pelos produtos, e correção dos falsos positivos (caso Glowy).
 3. Prompts: ajustar mantendo as regras do AGENTS.md: a regra de evidência na primeira frase, a seção "EVIDENCE RULE" e o ragLine em todo cartão.
 4. Score e best fit (OpenAI): regras baseadas só em evidência com fonte. Corrigir a falsa "prova de estoque" (caso Dipaso).
