@@ -1,5 +1,5 @@
-import type { Brief, Extraction } from "./types"
-import { requestJson } from "./http"
+import type { Brief, ContactField, Extraction } from "./types"
+import { ApiError, requestJson } from "./http"
 import { firecrawlPrompt } from "./prompts"
 import { asString, asStringArray, clip } from "./text"
 
@@ -292,6 +292,188 @@ export async function scrapeProfile(
     return profile
   } catch (error) {
     return empty(error instanceof Error ? error.message : "Firecrawl scrape failed.")
+  }
+}
+
+/**
+ * Company read (phase B, measured on 14/11/2026): map the site, then scrape the home page and
+ * the contact page with header and footer, using the same schema. Each contact keeps the URL
+ * of the page that published it.
+ */
+export const READ_LEAD_MS = 60_000
+export const READ_CONCURRENCY = 3
+const MAP_TIMEOUT_MS = 15_000
+const SCRAPE_TIMEOUT_MS = 30_000
+const CONTACT_FIELDS: ContactField[] = ["email", "phone", "whatsapp", "website", "keyPerson", "keyPersonRole"]
+const CONTACT_PAGE = /contact|contacto|cont[aá]ct[ae]nos|contato|fale-conosco|kontakt/i
+const READ_TIMEOUT_MESSAGE = "Firecrawl took too long. Scoring uses the Exa excerpt."
+
+/** Lowest published Firecrawl plan limit (10 scrapes per minute) unless FIRECRAWL_SCRAPES_PER_MINUTE says otherwise. */
+function scrapeSpacingMs(): number {
+  const perMinute = Number(process.env.FIRECRAWL_SCRAPES_PER_MINUTE)
+  return Math.ceil(60_000 / (Number.isFinite(perMinute) && perMinute > 0 ? perMinute : 10))
+}
+
+let nextScrapeAt = 0
+async function scrapeSlot(): Promise<void> {
+  const now = Date.now()
+  const at = Math.max(now, nextScrapeAt)
+  nextScrapeAt = at + scrapeSpacingMs()
+  if (at > now) await new Promise((resolve) => setTimeout(resolve, at - now))
+}
+
+function sameUrl(left: string, right: string): boolean {
+  return left.replace(/\/+$/, "").toLowerCase() === right.replace(/\/+$/, "").toLowerCase()
+}
+
+/** The first mapped link that looks like a contact page, other than the home page. */
+export function findContactPage(data: unknown, home: string): string | undefined {
+  const links = ((data ?? {}) as { links?: unknown }).links
+  if (!Array.isArray(links)) return undefined
+  for (const link of links) {
+    const url = typeof link === "string" ? link : asString((link as { url?: unknown })?.url)
+    if (url && CONTACT_PAGE.test(url) && !sameUrl(url, home)) return url
+  }
+  return undefined
+}
+
+function pageProfile(json: Record<string, unknown>): Extraction | null {
+  const profile = profileFromAgent({ data: json })
+  if (profile) return profile
+  const found = contacts(json)
+  return CONTACT_FIELDS.some((field) => found[field]) ? { ...empty(""), ok: true, error: undefined, ...found } : null
+}
+
+function union(left: string[] = [], right: string[] = [], max = 8): string[] {
+  return [...new Set([...left, ...right].map((item) => item.trim()).filter(Boolean))].slice(0, max)
+}
+
+/**
+ * Merges the pages read for one lead. Contacts prefer the contact page and record the page URL.
+ * Profile text comes from the home page, then the contact page. Lists are joined.
+ */
+export function mergePages(pages: { url: string; json: Record<string, unknown> | null }[]): Extraction | null {
+  const read = pages
+    .map((page) => ({ url: page.url, profile: page.json ? pageProfile(page.json) : null }))
+    .filter((page): page is { url: string; profile: Extraction } => Boolean(page.profile))
+  if (!read.length) return null
+  const [first, ...rest] = read
+  const merged: Extraction = { ...first.profile }
+  for (const page of rest) {
+    const other = page.profile
+    for (const key of ["companyName", "headquarters", "country", "role", "summary", "lastPurchase", "stock", "brandPerformance", "salesNote"] as const) {
+      if (!merged[key] && other[key]) merged[key] = other[key]
+    }
+    merged.buys = union(merged.buys, other.buys)
+    merged.sells = union(merged.sells, other.sells)
+    merged.markets = union(merged.markets, other.markets)
+    merged.certifications = union(merged.certifications, other.certifications)
+    merged.buyerSignals = union(merged.buyerSignals, other.buyerSignals, 4)
+    merged.competitorMoves = union(merged.competitorMoves, other.competitorMoves, 4)
+    merged.latestHires = union(merged.latestHires, other.latestHires, 6)
+  }
+  merged.excerpt = clip(merged.summary, 1600)
+  const sources: Partial<Record<ContactField, string>> = {}
+  for (const field of CONTACT_FIELDS) {
+    merged[field] = ""
+    for (const page of [...read].reverse()) {
+      const value = asString(page.profile[field]).trim()
+      if (value) {
+        merged[field] = value
+        sources[field] = page.url
+        break
+      }
+    }
+  }
+  merged.contactSources = sources
+  merged.pagesRead = read.map((page) => page.url)
+  merged.ok = true
+  merged.error = undefined
+  return merged
+}
+
+async function scrapePageJson(url: string, brief: Brief, key: string, country: string, buyerType: string) {
+  const body = JSON.stringify({
+    url,
+    onlyMainContent: false,
+    formats: [{ type: "json", prompt: firecrawlPrompt(brief, country, buyerType), schema: SCHEMA }],
+  })
+  for (let attempt = 0; ; attempt += 1) {
+    await scrapeSlot()
+    try {
+      const data = await requestJson("https://api.firecrawl.dev/v2/scrape", {
+        method: "POST",
+        timeoutMs: SCRAPE_TIMEOUT_MS,
+        headers: { Authorization: `Bearer ${key}` },
+        body,
+      })
+      const inner = ((data ?? {}) as { data?: { json?: unknown } }).data
+      const json = inner?.json
+      return json && typeof json === "object" && !Array.isArray(json) ? (json as Record<string, unknown>) : null
+    } catch (error) {
+      // One retry on the plan's rate limit; everything else is reported to the caller.
+      if (attempt === 0 && error instanceof ApiError && error.status === 429) {
+        await new Promise((resolve) => setTimeout(resolve, error.retryAfterMs ?? 10_000))
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+async function readPages(url: string, brief: Brief, key: string, country: string, buyerType: string): Promise<Extraction> {
+  let contactPage: string | undefined
+  try {
+    const map = await requestJson("https://api.firecrawl.dev/v2/map", {
+      method: "POST",
+      timeoutMs: MAP_TIMEOUT_MS,
+      headers: { Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ url, search: "contact contacto contactenos contactanos contato", limit: 30 }),
+    })
+    contactPage = findContactPage(map, url)
+  } catch {
+    // Without the map, the home page is still read.
+  }
+  const urls = contactPage ? [url, contactPage] : [url]
+  const settled = await Promise.allSettled(urls.map((page) => scrapePageJson(page, brief, key, country, buyerType)))
+  const merged = mergePages(urls.map((page, index) => ({ url: page, json: settled[index].status === "fulfilled" ? settled[index].value : null })))
+  if (merged) {
+    if (!merged.website) merged.website = url
+    return merged
+  }
+  const failure = settled.find((item): item is PromiseRejectedResult => item.status === "rejected")
+  return empty(
+    failure
+      ? failure.reason instanceof Error
+        ? failure.reason.message
+        : "Firecrawl scrape failed."
+      : "Firecrawl read the pages but found neither a profile nor contacts."
+  )
+}
+
+/** Reads one lead within READ_LEAD_MS. Never throws. */
+export async function readCompanyPages(
+  url: string,
+  brief: Brief,
+  key: string,
+  country = "",
+  buyerType = "",
+  limitMs = READ_LEAD_MS
+): Promise<Extraction> {
+  if (!/^https?:\/\//i.test(url)) return empty("The lead has no http(s) page to read.")
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<Extraction>((resolve) => {
+    timer = setTimeout(() => resolve(empty(READ_TIMEOUT_MESSAGE)), limitMs)
+  })
+  try {
+    return await Promise.race([
+      readPages(url, brief, key, country, buyerType).catch((error) =>
+        empty(error instanceof Error ? error.message : "Firecrawl read failed.")
+      ),
+      timeout,
+    ])
+  } finally {
+    clearTimeout(timer)
   }
 }
 

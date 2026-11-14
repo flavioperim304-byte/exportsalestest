@@ -23,13 +23,10 @@ import { searchDumpFlow } from "./dump-search"
 import { advanceExa, searchLeads } from "./exa"
 import {
   EXTRACT_POLL_MS,
+  READ_CONCURRENCY,
   failedExtraction,
-  jobTimedOut,
-  pollExtractJob,
-  scrapeProfile,
+  readCompanyPages,
   stageTimedOut,
-  startExtractJob,
-  timedOutExtraction,
 } from "./firecrawl"
 import { publicError } from "./http"
 import { getKeys } from "./keys"
@@ -584,116 +581,40 @@ async function doExtract(id: string): Promise<"wait" | "next"> {
     return "next"
   }
 
-  if (snapshot.extractLeadId) {
-    const lead = snapshot.leads.find((item) => item.id === snapshot.extractLeadId)
-    if (!lead) {
-      await updateRun(id, (run) => {
-        run.extractJobId = undefined
-        run.extractLeadId = undefined
-        run.extractJobStartedAt = undefined
-      })
-      return "next"
-    }
-
-    if (!snapshot.extractJobStartedAt) {
-      await updateRun(id, (run) => {
-        run.extractJobStartedAt = now()
-      })
-    }
-    const timedOut = jobTimedOut(snapshot.extractJobStartedAt ?? now())
-    if (snapshot.extractJobId && !timedOut) {
-      try {
-        const polled = await pollExtractJob(keys.firecrawl, snapshot.extractJobId, lead.url)
-        if (polled.pending) {
-          await updateRun(id, (run) => {
-            const extract = stage(run, "extract")
-            const index = run.leads.findIndex((item) => item.id === lead.id) + 1
-            const waited = snapshot.extractJobStartedAt
-              ? Math.max(0, Math.round((Date.now() - Date.parse(snapshot.extractJobStartedAt)) / 1000))
-              : 0
-            extract.detail = `Reading ${lead.name} (${index} of ${run.leads.length})${waited ? ` · ${waited}s` : ""}.`
-          })
-          return "wait"
-        }
-        await updateRun(id, (run) => fileExtraction(run, lead.id, polled.extraction))
-        return "next"
-      } catch (error) {
-        if (!timedOut) {
-          const message = publicError(error, secrets())
-          await updateRun(id, (run) => fileExtraction(run, lead.id, failedExtraction(message)))
-          return "next"
-        }
-      }
-    }
-
-    if (timedOut || !snapshot.extractJobId) {
-      if (timedOut) {
-        const scraped = await scrapeProfile(
-          lead.url,
-          snapshot.brief,
-          keys.firecrawl,
-          lead.market ?? "",
-          lead.buyerType ?? ""
-        )
-        await updateRun(id, (run) =>
-          fileExtraction(run, lead.id, scraped.ok ? scraped : timedOutExtraction())
-        )
-        return "next"
-      }
-    }
+  // Earlier versions kept one Firecrawl extract job open per lead. That state is cleared here.
+  if (snapshot.extractLeadId || snapshot.extractJobId) {
+    await updateRun(id, (run) => {
+      run.extractJobId = undefined
+      run.extractLeadId = undefined
+      run.extractJobStartedAt = undefined
+    })
   }
 
-  const pending = snapshot.leads.find((lead) => !lead.extraction)
-  if (!pending) {
+  const pending = snapshot.leads.filter((lead) => !lead.extraction)
+  if (!pending.length) {
     await updateRun(id, (run) => finishExtractStage(run))
     return "next"
   }
 
-  if (!/^https?:\/\//i.test(pending.url)) {
-    await updateRun(id, (run) => fileExtraction(run, pending.id, failedExtraction("The lead has no http(s) page to read.")))
-    return "next"
-  }
-
+  // Several leads at a time: map → home page + contact page, each lead capped at READ_LEAD_MS.
+  const batch = pending.slice(0, READ_CONCURRENCY)
+  const firecrawlKey = keys.firecrawl ?? ""
+  const done = snapshot.leads.length - pending.length
   await updateRun(id, (run) => {
-    run.extractLeadId = pending.id
-    run.extractJobStartedAt = now()
     const extract = stage(run, "extract")
     extract.status = "running"
     extract.startedAt = extract.startedAt ?? now()
-    const index = run.leads.findIndex((item) => item.id === pending.id) + 1
-    extract.detail = `Reading ${pending.name} (${index} of ${run.leads.length}).`
+    extract.detail = `Reading ${batch.map((lead) => lead.name).join(", ")} (${done + 1}–${done + batch.length} of ${run.leads.length}).`
   })
-
-  try {
-    const jobId = await startExtractJob(
-      pending.url,
-      snapshot.brief,
-      keys.firecrawl,
-      pending.market ?? "",
-      pending.buyerType ?? ""
-    )
-    await updateRun(id, (run) => {
-      run.extractJobId = jobId
-      run.extractLeadId = pending.id
-      run.extractJobStartedAt = run.extractJobStartedAt ?? now()
-    })
-  } catch (error) {
-    const message = publicError(error, secrets())
-    try {
-      const scraped = await scrapeProfile(
-        pending.url,
-        snapshot.brief,
-        keys.firecrawl,
-        pending.market ?? "",
-        pending.buyerType ?? ""
-      )
-      await updateRun(id, (run) =>
-        fileExtraction(run, pending.id, scraped.ok ? scraped : failedExtraction(message))
-      )
-    } catch {
-      await updateRun(id, (run) => fileExtraction(run, pending.id, failedExtraction(message)))
-    }
-  }
+  const results = await Promise.all(
+    batch.map(async (lead) => ({
+      leadId: lead.id,
+      extraction: await readCompanyPages(lead.url, snapshot.brief, firecrawlKey, lead.market ?? "", lead.buyerType ?? ""),
+    }))
+  )
+  await updateRun(id, (run) => {
+    for (const result of results) fileExtraction(run, result.leadId, result.extraction)
+  })
   return "next"
 }
 

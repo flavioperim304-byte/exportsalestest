@@ -64,12 +64,13 @@ Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
      - Pessoa-chave (decisor): nenhum dos dois métodos encontrou, em nenhuma lead.
      - Timeout: não reproduzido (os 2 M1 terminaram abaixo de 70 s). A causa segue desconhecida. Hipótese não verificada: com uma lead por vez e até ~95 s cada, 10 leads passam do teto de 8 min da etapa.
      - Glowy: o email publicado em glowy.pe/contacto é de outro domínio (ventaonline@maxitienda.pe). Relação entre as empresas: não sei.
-     Pendente (Fase B, aguarda autorização do usuário):
-     1. Trocar o extract pelo M2 (map → página inicial + página de contato, incluindo cabeçalho e rodapé).
-     2. Gravar a URL de origem de cada contato em campos novos, sem remover campos existentes e sem mudar o dashboard.
-     3. Ler várias leads ao mesmo tempo, respeitando o limite do Firecrawl (10 scrapes por minuto), com limite de tempo por lead.
-     4. Testar com APIs reais antes de afirmar que funciona.
-     Decisões do usuário: medir o M1 nas 3 leads que faltaram (Euro Style, Dipaso, Glowy; ~100 créditos)? Encontrar o decisor fica como passo separado.
+     Fase B (autorizada e feita em 14/11/2026):
+     1. A etapa de leitura do pipeline usa o M2 (readCompanyPages em lib/firecrawl.ts): map → página inicial + página de contato, com cabeçalho e rodapé.
+     2. Cada contato grava a URL de origem em extraction.contactSources; as páginas lidas ficam em extraction.pagesRead. Campos novos opcionais; nenhum campo removido; dashboard e banco sem mudança.
+     3. Lotes de 3 leads ao mesmo tempo, 60 s por lead, 10 scrapes por minuto (ajustável por FIRECRAWL_SCRAPES_PER_MINUTE), uma nova tentativa em erro 429. Teto de 8 min da etapa mantido.
+     4. Teste real (5 leads, teto 60 créditos): 5 de 5 lidas sem erro, 58 s no total (lotes de 34 s e 23 s; maior lead 34 s), 45 créditos. Email e telefone em 4 de 5, com URL de origem; Dipaso sem contato publicado na página inicial e sem página de contato no map.
+     Limitações: o teste chamou readCompanyPages nos mesmos lotes da etapa, não a função interna doExtract. lead-refresh.ts continua com a leitura antiga. Decisor: ainda nenhum nome encontrado (passo separado).
+     Pendente do usuário: aplicar a leitura nova também no lead-refresh.ts? Medir o M1 nas 3 leads que faltaram (~100 créditos) ainda é necessário?
    - Exa: busca mais precisa pelo ICP, pelas marcas e pelos produtos, e correção dos falsos positivos (caso Glowy).
 3. Prompts: ajustar mantendo as regras do AGENTS.md: a regra de evidência na primeira frase, a seção "EVIDENCE RULE" e o ragLine em todo cartão.
 4. Score e best fit (OpenAI): regras baseadas só em evidência com fonte. Corrigir a falsa "prova de estoque" (caso Dipaso).

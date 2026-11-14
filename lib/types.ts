@@ -252,7 +252,13 @@ export type Extraction = {
   salesNote?: string
   /** Competitor moves named on the page. */
   competitorMoves?: string[]
+  /** Page URL where each published contact was found. Absent when the field was not found on a read page. */
+  contactSources?: Partial<Record<ContactField, string>>
+  /** Pages Firecrawl read for this lead. */
+  pagesRead?: string[]
 }
+
+export type ContactField = "email" | "phone" | "whatsapp" | "website" | "keyPerson" | "keyPersonRole"
 
 export type BuyingKind = "last_purchase" | "stock" | "brand_performance" | "sales" | "competitor_move"
 
