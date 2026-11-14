@@ -1079,7 +1079,7 @@ async function doScore(id: string) {
   if (activity === "wait") return
   const commerce = await attachMissingCommerce(id)
   if (commerce === "wait") return
-  // Versioned Autobound signals step. No-op without AUTOBOUND_API_KEY.
+  // Versioned signals step: turns the stored Exa activity and commerce signals into events.
   const signals = await attachMissingSignals(id)
   if (signals === "wait") return
   await attachCustomsRecords(id)

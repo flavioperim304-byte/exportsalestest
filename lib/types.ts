@@ -551,10 +551,9 @@ export type SignalType =
   | "event"
   | "news"
   | "commercial_activity"
-  | "buyer_intent"
   | "other"
 
-export type SignalSource = "autobound" | "exa"
+export type SignalSource = "exa"
 
 export type SignalConfidenceLevel = "high" | "medium" | "low"
 
@@ -576,26 +575,21 @@ export type SignalEvent = {
   /** Deterministic: source + type + url + occurredAt. Same fact, same id. */
   id: string
   type: SignalType
-  /** Provider type/subtype exactly as returned (e.g. "news/productLaunch", "hiring-trends"). */
+  /** Origin of the signal in the Exa steps, e.g. "activity/launch" or "commerce/restock". */
   subtype: string
-  /** Which provider field set the normalized type. */
-  classifiedBy?: "provider_type" | "provider_tags"
-  /** Provider's own tags, unchanged, when present. */
-  providerTags?: string[]
   /** When the fact happened or was published, as stated by the source. Absent when the source gives no date. */
   occurredAt?: string
   /** When this desk captured the event. */
   detectedAt: string
   source: SignalSource
-  sourceSignalId?: string
   confidence: SignalConfidence
   evidence: SignalEvidence
-  /** Version of the stage that produced the event, e.g. signals-autobound@1.0.0. */
+  /** Version of the stage that produced the event, e.g. signals-exa@1.0.0. */
   stageVersion: string
   runId?: string
 }
 
-export type SignalTypeStatus = "found" | "not_found" | "error" | "skipped_budget" | "not_requested"
+export type SignalTypeStatus = "found" | "not_found" | "error"
 
 export type SignalScan = {
   stageVersion: string
@@ -603,21 +597,11 @@ export type SignalScan = {
   runId?: string
   startedAt: string
   finishedAt: string
-  status: "done" | "error" | "skipped_budget" | "skipped_no_domain" | "skipped_no_topics" | "dry_run"
-  /** Which Autobound endpoint the scan used. Absent means company enrich. */
-  endpoint?: "enrich" | "intent_timeline"
+  status: "done" | "error"
   /** found / not_found / error per normalized type. */
   types: Partial<Record<SignalType, SignalTypeStatus>>
-  /** Worst-case credits charged against the run budget (2 per returned signal). */
-  creditsEstimated: number
-  /** Credit headers exactly as returned by the provider, when present. */
-  creditsReported?: Record<string, string>
   eventsAdded: number
-  /** Results dropped because they had no evidence URL. */
-  discarded: number
   error?: string
-  /** The request that was (or would be) sent, without credentials. */
-  request?: { endpoint: string; body: Record<string, unknown> }
 }
 
 export type RagMatch = {

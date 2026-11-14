@@ -8,7 +8,7 @@ export const UPLIFT_WINDOW_MONTHS = 24
 
 /**
  * Points per distinct qualifying type (set by the user, 2026-11-12):
- * expansion +2, product launch +2, hiring +1, event +1, buyer intent +10.
+ * expansion +2, product launch +2, hiring +1, event +1.
  * News, commercial activity and other are neutral. Each type counts once per lead.
  * One point = one ICP level; the result is capped at high (and at medium without a
  * published buy fact while the current rule is on).
@@ -18,7 +18,6 @@ export const UPLIFT_WEIGHTS: Partial<Record<SignalType, number>> = {
   product_launch: 2,
   hiring: 1,
   event: 1,
-  buyer_intent: 10,
 }
 
 const LEVELS = ["low", "medium", "high"] as const

@@ -21,7 +21,7 @@ function syntheticEvent(type: SignalType): SignalEvent {
     subtype: `synthetic/${type}`,
     occurredAt: new Date(NOW - 90 * 86400000).toISOString(),
     detectedAt: new Date(NOW).toISOString(),
-    source: "autobound",
+    source: "exa",
     confidence: { level: "high", basis: "caso de teste" },
     evidence: { url: `https://example.test/${type}` },
     stageVersion: "synthetic",
@@ -41,7 +41,6 @@ const SCENARIOS: { label: string; types: SignalType[] }[] = [
   { label: "Lançamento de produto", types: ["product_launch"] },
   { label: "Expansão", types: ["expansion"] },
   { label: "Lançamento + contratação", types: ["product_launch", "hiring"] },
-  { label: "Intenção de compra", types: ["buyer_intent"] },
 ]
 
 const md: string[] = []

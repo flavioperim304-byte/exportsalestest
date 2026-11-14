@@ -16,7 +16,6 @@ export const SIGNAL_TYPES: SignalType[] = [
   "event",
   "news",
   "commercial_activity",
-  "buyer_intent",
   "other",
 ]
 
@@ -27,28 +26,7 @@ export const SIGNAL_TYPE_LABEL: Record<SignalType, string> = {
   event: "evento / feira",
   news: "notícia",
   commercial_activity: "atividade comercial",
-  buyer_intent: "intenção de compra",
   other: "outro",
-}
-
-/**
- * Maps a provider label to a normalized type. Only the provider's own type/subtype
- * strings are read — never the article text — so classification adds no interpretation.
- */
-export function normalizeType(providerType: string, providerSubtype = ""): SignalType {
-  const label = `${providerType} ${providerSubtype}`.toLowerCase()
-  if (/review|github|seo|traffic|tech.?stack|glassdoor/.test(label)) return "other"
-  // Negative signals never count as an increase.
-  if (/layoff|contraction|reduction|bankrupt|restructur|departure|closing|closure|shutdown/.test(label)) return "other"
-  if (/conference|webinar|\bevents?\b|exhibit|trade.?show|trade.?fair|\bexpo\b|summit/.test(label)) return "event"
-  if (/hir|job|recruit|headcount|vacanc|new.?role|appointment/.test(label)) return "hiring"
-  if (/expan|office|opening|new.?location|facility|warehouse|relocat|geograph|new.?market/.test(label)) return "expansion"
-  if (/launch|new.?product|product.?release/.test(label)) return "product_launch"
-  if (/partner|contract|customer|client|distribut|deal|acqui|merger|rfp|tender|award|brand/.test(label)) {
-    return "commercial_activity"
-  }
-  if (/news/.test(label)) return "news"
-  return "other"
 }
 
 /** Two independent FNV-1a 32-bit passes → 16 hex chars. Pure JS, so this module also runs in the browser bundle. */

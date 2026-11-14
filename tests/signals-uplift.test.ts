@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import seedRuns from "../lib/data/seed-runs.json"
 import { openaiInstructions, parallelInstructions, researchPrompt } from "../lib/prompts"
-import { eventsFromExa, normalizeType } from "../lib/signals/events"
+import { eventsFromExa } from "../lib/signals/events"
 import {
   UPLIFT_WEIGHTS,
   applyUplift,
@@ -24,7 +24,7 @@ function event(type: SignalType, overrides: Partial<SignalEvent> = {}): SignalEv
     subtype: `test/${type}`,
     occurredAt: "2026-06-01T00:00:00.000Z",
     detectedAt: "2026-11-12T00:00:00.000Z",
-    source: "autobound",
+    source: "exa",
     confidence: { level: "high", basis: "test" },
     evidence: { url: `https://example.test/${type}` },
     stageVersion: "test",
@@ -47,8 +47,8 @@ function lead(events: SignalEvent[] = [], icp: "high" | "medium" | "low" = "low"
 
 const RULES: SignalUpliftRule[] = ["cap_medium_without_buy_fact", "no_cap"]
 
-test("weights match the user's rule: expansion +2, launch +2, hiring +1, event +1, buyer intent +10, others 0", () => {
-  assert.deepEqual(UPLIFT_WEIGHTS, { expansion: 2, product_launch: 2, hiring: 1, event: 1, buyer_intent: 10 })
+test("weights match the user's rule: expansion +2, launch +2, hiring +1, event +1, others 0", () => {
+  assert.deepEqual(UPLIFT_WEIGHTS, { expansion: 2, product_launch: 2, hiring: 1, event: 1 })
   for (const type of ["news", "commercial_activity", "other"] as SignalType[]) {
     assert.equal(upliftPoints({ [type]: ["x"] }), 0)
   }
@@ -66,7 +66,7 @@ test("no signals: the score is kept at every level and under both rules", () => 
 })
 
 test("signals never lower the score — every type combination, level, rule and buy-fact state", () => {
-  const types: SignalType[] = ["hiring", "expansion", "product_launch", "event", "buyer_intent", "news", "commercial_activity", "other"]
+  const types: SignalType[] = ["hiring", "expansion", "product_launch", "event", "news", "commercial_activity", "other"]
   for (let mask = 0; mask < 1 << types.length; mask += 1) {
     const events = types.filter((_, index) => mask & (1 << index)).map((type) => event(type))
     for (const from of LEVELS) {
@@ -109,15 +109,6 @@ test("undated, low-confidence, older than 24 months or future events do not coun
     event("expansion", { occurredAt: "2027-01-01T00:00:00.000Z" }),
   ]
   assert.deepEqual(qualifyingTypes(lead(ignored), NOW), {})
-})
-
-test("negative provider labels never become an increasing type", () => {
-  assert.equal(normalizeType("workforce", "layoffs"), "other")
-  assert.equal(normalizeType("office", "officeClosing"), "other")
-  assert.equal(normalizeType("workforce", "teamContraction"), "other")
-  assert.equal(normalizeType("news", "fundingEvent"), "news")
-  assert.equal(normalizeType("social", "conferencePresentation"), "event")
-  assert.equal(normalizeType("office", "officeOpening"), "expansion")
 })
 
 test("Exa fairs and events become the 'event' type", () => {
@@ -168,7 +159,7 @@ test("OpenAI and Parallel receive the signals and the rule; Parallel sees the mo
   assert.match(openaiInstructions(run.brief), /### SIGNALS/)
   assert.match(parallelInstructions(run.brief), /### SIGNALS/)
   const prompt = researchPrompt(run.brief, [target])
-  assert.match(prompt, /detected_signals:\n- contratação · 2026-06-01 · autobound · confidence high · Vaga comercial · https:\/\/example.test\/vaga/)
+  assert.match(prompt, /detected_signals:\n- contratação · 2026-06-01 · exa · confidence high · Vaga comercial · https:\/\/example.test\/vaga/)
   assert.match(prompt, /preliminary_openai=ICP low;/)
 })
 
