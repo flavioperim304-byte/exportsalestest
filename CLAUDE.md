@@ -38,6 +38,15 @@ O usuário vai fornecer buscas e leads reais para os testes.
 - Tempo por execução, timeouts e créditos gastos por API.
 Um ajuste só entra se melhorar essas métricas no teste real.
 
+## Último teste real (13/11/2026, 5 leads, main × sinais-v1.1)
+- Build e testes passam; as 18 falhas já existiam na main.
+- Autobound: 31 créditos. Sinais com URL só em Agencia y Mercadeo (4) e Grupo Dipaso (3).
+  Productos WOW: 10 créditos por 5 sinais sem URL (descartados). Euro Style: 1 crédito cobrado sem sinais.
+- Score: Dipaso low→high e Agencia y Mercadeo low→medium (high sem a regra); os demais ficaram em low.
+  O modelo mudou o score e o best fit do Dipaso apesar da instrução (risco de contar o mesmo sinal duas vezes).
+- Falsos positivos: frase negativa aceita como estoque (Dipaso); sinais de outras marcas atribuídos à Glowy.
+- Ambiente: o fetch do Node só passa pelo proxy com NODE_USE_ENV_PROXY=1.
+
 ## Pendências (ordem de prioridade)
 1. Contatos (Firecrawl): medir primeiro (tempo e contatos: método atual × página inicial e de contato), com teto de créditos aprovado. Depois: ler várias empresas ao mesmo tempo, começar pela página de contato e pedir decisor com URL de origem.
 2. Prova de relevância: evidências de importação ou distribuição da categoria com URL. Corrigir os falsos positivos: frase negativa aceita como estoque em buyingFacts (fit-probability.ts, caso Grupo Dipaso) e sinais de outras marcas atribuídos à lead (activity.ts, caso Glowy).
