@@ -33,6 +33,13 @@ Problema de negócio: as leads não respondem aos contatos do usuário.
 O ajuste é na ferramenta: trazer mais dados das leads, e dados mais relevantes.
 O usuário vai fornecer buscas e leads reais para os testes.
 
+## Contatos reais do usuário (informado em 14/11/2026; números aproximados, ditos pelo usuário)
+- O usuário valida o ICP pelo website antes de enviar a mensagem.
+- Cerca de 20 a 25 contatos; 4 a 5 responderam (cerca de 16% a 25%); nenhum avançou.
+- Leitura (hipótese, sem dados): o gargalo está depois da resposta. Perfil conferido à mão, mas sem momento ou condição de compra (exclusividade, preço, sem demanda agora) ou contato sem poder de decisão. A ferramenta hoje não mede isso (intenção, alerta, decisor).
+- Pendente do usuário: enviar a lista dos contatos com empresa e site; canal e tipo de contato (email genérico, WhatsApp, pessoa nomeada e cargo); respondeu (sim/não); o que disse e por que não avançou.
+- Uso: comparar quem respondeu × quem não respondeu e os motivos × os sinais que a ferramenta encontraria; base da validação das Regras de sinais e da memória de desfechos (etapa 7c). Não supor motivos antes de receber a lista.
+
 ## Métricas de cada teste (versão atual × versão ajustada, mesmas buscas)
 - % de leads com contato nomeado de decisor (comprador, diretor, comercial), não genérico, com URL de origem.
 - % de leads com evidência verificável de importação ou distribuição da categoria (marcas, países de origem, registros), com URL.
