@@ -9,6 +9,7 @@ import {
   computeUplift,
   modelIcp,
   qualifyingTypes,
+  signalCardLines,
   upliftPoints,
 } from "../lib/signals/uplift"
 import type { Lead, Run, SignalEvent, SignalType, SignalUpliftRule } from "../lib/types"
@@ -184,4 +185,15 @@ test("saved runs (84 real leads, no stored signals): every score is kept", () =>
   }
   delete process.env.SIGNAL_UPLIFT_CAP
   assert.ok(checked >= 84)
+})
+
+test("events stored by the removed Autobound stage stay on the lead but do not count or reach the cards", () => {
+  const legacy = { ...event("expansion"), source: "autobound" } as unknown as SignalEvent
+  const target = { signalEvents: [legacy] } as unknown as Lead
+  assert.equal(computeUplift("low", target, "no_cap", NOW, false).to, "low")
+  assert.deepEqual(signalCardLines(target), [])
+  assert.equal(target.signalEvents!.length, 1, "stored data is preserved")
+  target.signalEvents!.push(event("expansion"))
+  assert.equal(computeUplift("low", target, "no_cap", NOW, false).to, "high")
+  assert.equal(signalCardLines(target).length, 1)
 })

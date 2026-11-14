@@ -48,9 +48,17 @@ export function qualifies(event: SignalEvent, now = Date.now()): boolean {
   return stamp >= start.getTime()
 }
 
+/**
+ * Events from active sources only. Events stored by the removed Autobound stage stay on the
+ * lead (data is preserved) but no longer count for the score or reach the model cards.
+ */
+export function activeSignalEvents(lead: Lead): SignalEvent[] {
+  return (lead.signalEvents ?? []).filter((event) => event.source === "exa")
+}
+
 export function qualifyingTypes(lead: Lead, now = Date.now()): Partial<Record<SignalType, string[]>> {
   const types: Partial<Record<SignalType, string[]>> = {}
-  for (const event of lead.signalEvents ?? []) {
+  for (const event of activeSignalEvents(lead)) {
     if (!qualifies(event, now)) continue
     ;(types[event.type] ??= []).push(event.id)
   }
@@ -122,7 +130,7 @@ export function modelIcp(lead: Lead, source: "openai" | "parallel"): string | un
 
 /** Card lines for OpenAI and Parallel: the detected signals with date, source, confidence and URL. */
 export function signalCardLines(lead: Lead, max = 6): string[] {
-  const events = [...(lead.signalEvents ?? [])]
+  const events = activeSignalEvents(lead)
     .filter((event) => event.type !== "other")
     .sort((left, right) => Date.parse(right.occurredAt ?? "") - Date.parse(left.occurredAt ?? "") || 0)
     .slice(0, max)

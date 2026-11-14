@@ -3,7 +3,7 @@
 ## Objetivo
 Gerar, enriquecer, classificar e revisar leads relevantes para fornecedores exportadores,
 com dashboard de busca e visualização. Entrada: busca, país, HS Code, produto, prompt editável, ICP do fornecedor.
-Fluxo: busca (Exa) → enriquecimento (Firecrawl, Exa, Autobound) → score e best fit (OpenAI) → revisão final (Parallel).
+Fluxo: busca (Exa) → enriquecimento (Firecrawl, Exa) → score e best fit (OpenAI) → revisão final (Parallel).
 
 ## Regras de trabalho
 - Sempre apresente um plano antes de executar. Não execute sem autorização.
@@ -26,7 +26,6 @@ Fluxo: busca (Exa) → enriquecimento (Firecrawl, Exa, Autobound) → score e be
 
 ## Ambiente
 - Chamadas do Node: use NODE_USE_ENV_PROXY=1 para passar pelo proxy.
-- Teto de créditos do Autobound: 50 por teste, salvo autorização.
 
 ## Foco atual
 Gerar leads relevantes, com best fit preciso e baseado em evidência real.
