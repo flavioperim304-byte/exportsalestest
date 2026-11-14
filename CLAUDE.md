@@ -55,11 +55,51 @@ O usuário vai escolher outra API de sinais. Até lá, não integrar nenhuma API
 Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
 
 ## Plano (ordem de execução; cada etapa com plano, autorização e teste real)
-1. Enriquecimento: remover o Autobound (código, script e testes dele), mantendo os eventos de sinais e o build e os testes verdes.
-2. Enriquecimento:
-   - Firecrawl: medir primeiro (tempo e contatos: método atual × página inicial e de contato), com teto de créditos aprovado. Depois resolver o timeout e trazer contato de pessoa, email e WhatsApp, cada um com URL de origem.
-   - Exa: busca mais precisa por ICP, marcas e produtos. Corrigir os falsos positivos de outras marcas (activity.ts, caso Glowy), a vaga classificada como notícia e a página do exa.ai usada como fonte.
-3. Prompts: ajustar respeitando as regras do AGENTS.md (evidenceRule na primeira frase, seção EVIDENCE RULE, ragLine em todo cartão).
-4. Score e best fit (OpenAI): regras só com evidência com fonte. Corrigir a frase negativa aceita como estoque em buyingFacts (fit-probability.ts, caso Grupo Dipaso). Resolver o risco de o mesmo sinal contar duas vezes (opção A × B, decisão do usuário após testes repetidos).
-5. Best fit final (Parallel): ajustar as regras da revisão final.
-6. Supabase + Exa Monitor: criar as tabelas Leads_ExportIntelligence (leads salvas) e Best_Fit (histórico de best fit). Atualizar o best fit com os sinais da nova API de sinais e com os sinais que o Exa Monitor enviar sobre cada empresa monitorada. O Monitor só entra se alimentar o banco.
+1. Enriquecimento: sair do Autobound. Remover da branch sinais-v1.1 todo o código do Autobound. Manter o registro de sinais como eventos (data, tipo, fonte, URL), alimentado pela Exa. Status: feito nos commits d6b8845 e 5a183a7; falta o teste real confirmar.
+2. Enriquecimento: Firecrawl e Exa.
+   - Firecrawl: medir primeiro, depois resolver o timeout e trazer contato de pessoa, email e WhatsApp, cada um com a URL de origem.
+   - Exa: busca mais precisa pelo ICP, pelas marcas e pelos produtos, e correção dos falsos positivos (caso Glowy).
+3. Prompts: ajustar mantendo as regras do AGENTS.md: a regra de evidência na primeira frase, a seção "EVIDENCE RULE" e o ragLine em todo cartão.
+4. Score e best fit (OpenAI): regras baseadas só em evidência com fonte. Corrigir a falsa "prova de estoque" (caso Dipaso).
+5. Best fit final (Parallel): regras da revisão final.
+6. Supabase + Exa Monitor: nova tabela com as leads salvas. O best fit é atualizado com os sinais novos que o Exa Monitor encontrar.
+
+## Supabase (pré-requisito da etapa 6)
+- Projeto único: xtmixcnaojzcrwcbxcnw. É o mesmo banco da produção (tabelas desk_runs, desk_leads, desk_lead_events).
+- O projeto estava pausado e foi reativado em 14/11/2026. Última gravação no banco: 05/11/2026.
+- O Supabase está desconectado do Render (DATABASE_URL). Reconectar antes de criar e usar as tabelas novas.
+- Tabelas novas aprovadas: export_intelligence_leads (leads salvas) e export_intelligence_best_fits (histórico de best fit). RLS ligada. Criar por migração em supabase/migrations/, com a estrutura aprovada pelo usuário antes.
+- O dashboard não muda por enquanto: continua lendo desk_leads.
+
+## Regras de sinais (HIPÓTESE para testar e calibrar; não é regra definitiva)
+Princípio: o modelo (OpenAI ou Parallel) não dá a nota de sinais. Ele só classifica cada evidência num tipo abaixo, sempre com URL. A nota é calculada pelo código, sempre igual. Sem URL, o sinal não entra.
+
+A. Perfil (pré-requisito, não é intenção)
+- Vende ou distribui a mesma categoria (produtos, catálogo) — Firecrawl (site).
+- Distribui marcas estrangeiras (marcas e país de origem) — Firecrawl + Exa.
+- Atende o canal-alvo (salões, farmácias, varejo) — Firecrawl (site).
+- Registro sanitário de produtos importados — Parallel. NÃO VERIFICADO: se os registros de cada país são consultáveis publicamente e se o Parallel os acessa.
+- Registro de importação na categoria (Atlas e dumps) — base interna. Pelo AGENTS.md, nunca conta como compra.
+
+B. Intenção (momento)
+- Forte: chamada pública por fornecedores ou marcas — Firecrawl + Exa.
+- Forte: anunciou marca nova recentemente — Exa + Exa Monitor.
+- Forte: vaga de compras, gerente de marca ou de categoria — Firecrawl (carreiras) + Exa.
+- Média: perdeu ou encerrou uma marca da categoria — Exa.
+- Média: expansão (lojas, filial, depósito, país) — Exa.
+- Média: participação em feira do setor — Exa.
+- Média: entrou em categoria nova ou lançou linha própria — Exa + Firecrawl.
+- Média: licitação pública da categoria — Parallel. NÃO VERIFICADO.
+- Fraca: notícia geral, post institucional, estoque esgotado — Exa.
+
+C. Alerta (marcar "revisar" com o motivo)
+- Exclusividade com marca concorrente na mesma categoria; é fabricante e não distribuidor; fechamento de lojas ou recuperação judicial; site inativo ou sem atividade em 24 meses.
+
+Combinação (valores iniciais escolhidos sem base em dados; calibrar no teste):
+- Pontos de intenção: forte 3, média 2, fraca 1. Cada tipo conta uma vez.
+- Peso pela data: até 3 meses 100%, 3–12 meses 50%, 12–24 meses 25%, mais antigo não conta.
+- Perfil alto (categoria + marcas estrangeiras + canal), médio (categoria) ou baixo.
+- Resultado: perfil alto com intenção ≥ 4 = Alta; perfil alto com intenção < 4 = Média; perfil médio com intenção ≥ 2 = Média; perfil médio com intenção < 2 = Baixa; perfil baixo = Baixa.
+- Pendente de decisão do usuário: esta regra substitui os pesos antigos (expansão +2, lançamento +2, contratação +1, evento +1)? O alerta pode reduzir a classificação (contraria "o score nunca cai")?
+
+Validação obrigatória: rodar a regra nas leads que o usuário já contatou e comparar com quem respondeu e quem não respondeu. Mostrar cada sinal com a URL.
