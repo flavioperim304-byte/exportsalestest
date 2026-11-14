@@ -63,6 +63,13 @@ Manter o registro de sinais como eventos (data, tipo, fonte, confiança, URL).
 4. Score e best fit (OpenAI): regras baseadas só em evidência com fonte. Corrigir a falsa "prova de estoque" (caso Dipaso).
 5. Best fit final (Parallel): regras da revisão final.
 6. Supabase + Exa Monitor: nova tabela com as leads salvas. O best fit é atualizado com os sinais novos que o Exa Monitor encontrar.
+   Observação: pelo README, o Exa Monitor já existe na produção (um por best fit, período de 15 dias, webhook do serviço exportsales). O que falta é ligar os resultados do Monitor às tabelas novas e à atualização do best fit.
+7. RAG, memória e aprendizado (depende da etapa 6). Os modelos não aprendem sozinhos: aprendizado = guardar resultados reais e recalibrar regras e RAG, sempre com números.
+   - Verificar o RAG (serviço exportsales2, índice Chroma): se está no ar, quantas e quais empresas estão no índice (o README fala em 10) e se as comparações fazem sentido nas leads de teste.
+   - Memória de resultados: registrar por lead o desfecho (contatada, respondeu, reunião, venda, ou descartada com motivo: empresa errada, contato errado, falso positivo) em export_intelligence_leads.
+   - Aprendizado das regras: comparar periodicamente os sinais de quem respondeu × quem não respondeu e propor ajuste dos pesos da regra de sinais, mostrando os números.
+   - Aprendizado do RAG: incluir no índice as leads que responderam ou compraram como exemplos do perfil certo (exige mudar o serviço exportsales2). A regra continua: vizinho do RAG é outra empresa e nunca conta como compra.
+   - Pendente do usuário: onde hoje fica registrado se uma lead respondeu (planilha, CRM, email) e o que está no índice do RAG hoje.
 
 ## Supabase (pré-requisito da etapa 6)
 - Projeto único: xtmixcnaojzcrwcbxcnw. É o mesmo banco da produção (tabelas desk_runs, desk_leads, desk_lead_events).
