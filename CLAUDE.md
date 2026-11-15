@@ -83,6 +83,18 @@ Melhorias propostas (cada uma com plano, autorização e teste real; mesmas busc
 6. Deduplicar pelo domínio no pipeline. Preencher Email e Telefone existentes só com contato que tenha URL de origem.
 Mudanças na tela (rótulo "dado do país", cabeçalho do best fit, login, botão .zip) só com exceção autorizada pelo usuário.
 
+## Escopo de implementação na configuração atual (registrado em 14/11/2026 a pedido do usuário)
+Vale só o que funciona com a configuração atual: Exa, Firecrawl, OpenAI e Parallel. Nenhuma API nova. Sem mudar dashboard nem banco. Só na branch sinais-v1.1.
+Cada item continua exigindo plano, autorização e teste real (mesmas buscas, antes × depois, com as métricas acima).
+Motivo da ordem: os contatos reais do usuário responderam (16% a 25%, amostra pequena) mas nenhum avançou. O foco é relevância, decisor e momento de compra, não entrega de email.
+1. Filtro de relevância antes do score: exclusividade com concorrente, só varejo, outra categoria e multinacional excluída viram "descartada com motivo", com URL (melhoria 1; regra C). Confirmar antes de codar como mostrar as descartadas sem mudar o dashboard (campo novo opcional, sem remover leads).
+2. Decisor nomeado: nome e cargo de comprador, diretor ou comercial, com URL de origem. Firecrawl lê as páginas de equipe e "sobre" (a partir do map da leitura M2) e o Exa busca a pessoa. Não verificado: se o Exa traz cargo com fonte confiável.
+3. Sinais datados (só captura): ampliar a etapa signals-exa para os tipos da regra B (marca nova, vaga, feira, expansão, chamada por fornecedores, perda de marca), com busca do Exa limitada por data e Firecrawl na página de carreiras. Gravar como eventos, com nova versão da etapa. O score não muda até a decisão sobre as Regras de sinais.
+4. Deduplicação por domínio antes do enriquecimento (melhoria 6).
+5. Verificação automática de consistência: rótulo × número, item "publicado" sem URL, texto × bloco (melhoria 5). Só teste e relatório, sem mudar a tela. O relatório vai para o usuário, não para o GitHub.
+Fora deste escopo (pendências): regra de score dos sinais; lista de contatos reais; chaves das APIs no ambiente de teste; Supabase (reconexão, tabelas novas, Exa Monitor); leitura M2 no lead-refresh.ts e medição M1; rascunhos de sequência de emails (precisam de lugar na tela ou na exportação); Google Maps, validação de email e nova API de sinais; RAG e memória de desfechos; qualquer mudança no dashboard.
+Cópia no projeto do claude.ai: claude/escopo-implementacao-sinais-v1.1.md.
+
 ## Plano (ordem de execução; cada etapa com plano, autorização e teste real)
 1. Enriquecimento: sair do Autobound. Remover da branch sinais-v1.1 todo o código do Autobound. Manter o registro de sinais como eventos (data, tipo, fonte, URL), alimentado pela Exa. Status: feito nos commits d6b8845 e 5a183a7; falta o teste real confirmar.
 2. Enriquecimento: Firecrawl e Exa.
