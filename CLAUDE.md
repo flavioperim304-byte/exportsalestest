@@ -95,22 +95,26 @@ Motivo da ordem: os contatos reais do usuário responderam (16% a 25%, amostra p
 Fora deste escopo (pendências): regra de score dos sinais; lista de contatos reais; chaves das APIs no ambiente de teste; Supabase (reconexão, tabelas novas, Exa Monitor); leitura M2 no lead-refresh.ts e medição M1; rascunhos de sequência de emails (precisam de lugar na tela ou na exportação); Google Maps, validação de email e nova API de sinais; RAG e memória de desfechos; qualquer mudança no dashboard.
 Cópia no projeto do claude.ai: claude/escopo-implementacao-sinais-v1.1.md.
 
-## PRÓXIMA TAREFA: concluir o enriquecimento (autorizado pelo usuário em 14/11/2026)
-Autorizado: programar os itens abaixo e fazer push na branch sinais-v1.1 durante este trabalho. Continua proibido: main, produção, deploy manual, PR, dashboard e estrutura do banco.
-Mapa do código (lido em 14/11/2026, commit b10606b):
-- Etapas: search (Exa Agent) → extract (Firecrawl, readCompanyPages em lib/firecrawl.ts) → classify (Exa atividade e commerce, sinais, aduana, RAG e OpenAI em doScore, lib/pipeline.ts) → context (Parallel) → diligence.
-- Sinais: lib/signals/stage.ts (versão signals-exa@1.0.0) e eventsFromExa em lib/signals/events.ts. Hoje um sinal fora do domínio da empresa só perde confiança; não há checagem do nome da empresa.
-- Nota de fit: computeFitProbability em lib/fit-probability.ts tem tetos fixos (38, 44, 55 e 48 sem RAG) e alto só a partir de 70. Não mexer neste trabalho (é a etapa 4, fora deste escopo).
-- lead-refresh.ts ainda usa scrapeProfile (leitura antiga).
-Itens, nesta ordem, cada um com teste unitário novo:
-1. lead-refresh.ts: trocar scrapeProfile pela leitura M2 (readCompanyPages), mantendo contactSources e pagesRead. Nenhum campo removido.
-2. Falsos positivos (caso Glowy): em eventsFromExa e onde activity/commerce são gravados, só aceitar a evidência se o título ou o trecho citar o nome da empresa ou o domínio estiver no site da empresa. Rejeitados ficam registrados como "descartado: outra empresa", com URL.
-3. Decisor nomeado: a partir do map da M2, ler páginas de equipe, "sobre" e "quem somos"; buscar no Exa pelo nome da empresa e cargos de comprador, diretor ou comercial. Gravar nome, cargo e URL de origem em campo novo opcional. Sem URL, não grava. Não verificado: se o Exa traz cargo com fonte confiável (o teste real responde).
-4. Sinais datados (só captura): ampliar a etapa para os tipos da regra B (marca nova, vaga de compras ou de categoria, feira, expansão, chamada por fornecedores, perda de marca), com busca do Exa limitada por data e Firecrawl na página de carreiras. Gravar como eventos. Nova versão da etapa (signals-exa@1.1.0). O score não muda.
-Decidido: não medir a leitura antiga (M1) nas 3 leads restantes.
-Depois dos 4 itens: npm test (as 18 falhas antigas podem continuar; nenhuma falha nova) e npm run build; push na sinais-v1.1.
-Teste real no Render (depois do push): a mesma busca no serviço de produção e no de teste. Pendente do usuário: endereço do serviço de teste, confirmar que ele faz deploy da sinais-v1.1 com as 4 chaves, e a busca fixa (sugestão: a do último teste, LQ professional, Brasil, HS 330590). Antes de gastar créditos, pedir ao usuário o teto por API.
-Entrega ao usuário: tabela antes × depois por item, com as métricas desta página (decisor com URL, evidência com URL, falsos positivos, tempo, timeouts e créditos). Resultados vão para o usuário, não para o GitHub.
+## PRÓXIMA TAREFA: concluir o enriquecimento (SUSPENSA em 14/11/2026: não executar até o usuário liberar)
+Motivo: a análise completa do fluxo (14/11/2026, commit 61ff8f8) mostrou que a versão anterior desta tarefa quebraria o score. O usuário pediu para só seguir depois da análise. Autorização de push na sinais-v1.1 mantida para quando for liberada.
+
+Achados da análise (verificados no código):
+1. Sinais já mudam o score. applyUplift (lib/signals/uplift.ts, chamado em lib/pipeline.ts nas linhas ~165 e ~822) sobe o ICP de OpenAI e Parallel com os eventos: expansion +2, product_launch +2, hiring +1, event +1, teto médio sem fato de compra publicado. Qualquer evento novo desses tipos muda o score automaticamente.
+2. A checagem do nome da empresa já existe: mentionsCompany em lib/activity.ts, usada em activity e commerce. Página fora do domínio só entra se citar o nome completo. Página do próprio domínio entra sempre, mesmo quando fala de outras marcas (provável causa do caso Glowy, que é varejista e lista marcas). O teste de 13/11 também tinha o Autobound, já removido. Causa do caso Glowy: não confirmada.
+3. O decisor já tem campo: extraction.keyPerson e keyPersonRole (lib/types.ts). Já aparece no dashboard (components/run-desk.tsx) e já vai para os prompts (key_contact em lib/prompts.ts). Não criar campo novo.
+4. Eventos de sinais não aparecem no dashboard (nenhum componente lê signalEvents). Só influenciam o score (uplift) e os cartões dos modelos (signalCardLines). Para ver os sinais no teste, ler o JSON da execução pela API (/api/runs/[id]).
+5. Tipos de sinal: activity (news, launch, promotion, exhibition, event, mention, brand, social) e commerce (customs, restock, trade_fair, open_book, hiring_buy). Nenhum vira expansion hoje, então o peso +2 de expansão nunca é usado. brand (marca nova) vira commercial_activity, sem peso.
+6. lead-refresh.ts usa scrapeProfile (leitura antiga) e substitui a extraction inteira quando a leitura dá certo. Uma leitura com menos contatos apaga contatos já verificados, o que contraria "nunca substituir dado verificado".
+7. lead-db.ts cria e altera tabelas sozinho ao iniciar (CREATE TABLE e ALTER TABLE ... ADD COLUMN IF NOT EXISTS). Os dados da lead ficam no JSON (payload JSONB). Campo novo deve ir só no JSON; nenhuma coluna nova.
+8. Das 18 falhas antigas, algumas estão na área de enriquecimento (tests/activity.test.ts: ordem e classificação das atividades; tests/response-probability.test.ts: contratação de compras). O código mudou e os testes não. Essas partes não estão protegidas por teste.
+
+Itens corrigidos (só executar quando o usuário liberar):
+1. lead-refresh.ts: trocar scrapeProfile por readCompanyPages e MESCLAR campo a campo (manter o valor existente com URL quando o novo vier vazio). Teste unitário da mescla.
+2. Caso Glowy: primeiro reproduzir no teste real (ler o JSON) e só depois corrigir. Não codar no escuro.
+3. Decisor: preencher os campos existentes keyPerson e keyPersonRole, com a URL em contactSources. Sem URL, não grava.
+4. Sinais novos: decidir com o usuário antes de codar, porque mudam o score. Opções: (a) gravar com tipos sem peso no uplift; (b) aceitar que mudam o score e mostrar antes × depois.
+5. Antes de qualquer item: atualizar ou registrar os testes da área de enriquecimento que falham, para ter proteção contra quebra.
+Teste real no Render: ver a seção abaixo do usuário (endereço do serviço de teste, branch, chaves, busca fixa e teto de créditos).
 
 ## Plano (ordem de execução; cada etapa com plano, autorização e teste real)
 1. Enriquecimento: sair do Autobound. Remover da branch sinais-v1.1 todo o código do Autobound. Manter o registro de sinais como eventos (data, tipo, fonte, URL), alimentado pela Exa. Status: feito nos commits d6b8845 e 5a183a7; falta o teste real confirmar.
